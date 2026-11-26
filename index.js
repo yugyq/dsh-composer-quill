@@ -1484,7 +1484,13 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
   // The route that actually ran, not the one the client asked for. "跟随会话" leaves the
   // request body empty, so a log line that only records what the client sent cannot say
   // which model answered — and every latency number computed from it is unattributable.
-  trace('route-effective', { mode, provider: route.provider, model: route.model, effort })
+  trace('route-effective', {
+    sessionId: session?.id ?? session?.sessionId ?? null,
+    mode,
+    provider: route.provider,
+    model: route.model,
+    effort,
+  })
   let text = ''
   let finish
   let usage = null
@@ -1497,7 +1503,10 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
    * caller may ask for a cheap effort and retry when that is refused or useless.
    */
   const runStream = async ({ reasoningEffort, maxTokens }) => {
-    const out = { text: '', finish: undefined, usage: null }
+    // Thinking tokens are billed as output and, when the budget is short, they are
+    // the whole answer: a stream can spend 4 seconds thinking and never paint. Count
+    // them so "silent" can be told apart from "the model said nothing useful".
+    const out = { text: '', finish: undefined, usage: null, reasoning: 0 }
     const stream = ctx.llm.stream({
       provider: route.provider,
       model: route.model,
@@ -1538,6 +1547,10 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
           if (out.text !== '' && typeof onDelta === 'function') onDelta(out.text)
         } else if (chunk?.type === 'usage') out.usage = chunk.usage ?? null
         else if (chunk?.type === 'finish') out.finish = chunk.reason
+        else if (typeof chunk?.type === 'string' && /reason|think/i.test(chunk.type)) {
+          const piece = chunk.text ?? chunk.delta ?? chunk.thinking ?? chunk.content
+          out.reasoning += typeof piece === 'string' ? Array.from(piece).length : 1
+        }
         if (out.text.length > MAX_NORMALIZED_CHARS + 2000) break
       }
     } finally {
@@ -1579,6 +1592,7 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
   text = attempt.text
   finish = attempt.finish
   usage = attempt.usage
+  const reasoning = attempt.reasoning ?? 0
   // An empty reply used to look like "the model had nothing to say". Usually it means
   // the budget ran out before the first token, so record the cap alongside it.
   if (typeof text === 'string' && text.trim() === '' && finish?.kind !== 'error') {
@@ -1605,7 +1619,7 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
     reasoning: Number(usage?.reasoningTokens) || 0,
     peak: isPeak(startedAt),
   })
-  return { text, route, usage }
+  return { text, route, usage, reasoning, finish }
 }
 
 /** Server-sent-event frame writer for one response. */
@@ -1634,7 +1648,10 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
   // `first-delta`, so a request that never painted left no line at all — and every
   // latency figure was computed on the survivors.
   let status = 'error'
-  const progress = { painted: false, paintedChars: 0 }
+  let effectiveRoute = null
+  // `path` says which branch answered: drafts under MIN_TAIL_DRAFT_CHARS take the
+  // short prompt, which never streams, so a split of the wait is useless without it.
+  const progress = { painted: false, paintedChars: 0, path: 'main', finish: null, chars: 0, reasoning: 0 }
   const send = (event, payload) => {
     if (event === 'delta' && typeof payload?.text === 'string' && payload.text !== '') {
       progress.painted = true
@@ -1667,7 +1684,7 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     if (cleanDraft.trim() === '') throw httpError('draft is required for a compose request', 400)
     // The route that will actually be used, not the Session's: a model pick or a
     // thinking setting in Settings changes the answer and must change the key.
-    const effectiveRoute = routeOf(override) ?? routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx)
+    effectiveRoute = routeOf(override) ?? routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx)
     const key = cacheKey(
       sessionId,
       'compose',
@@ -1730,7 +1747,7 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     const workController = new AbortController()
     const workTimer = setTimeout(() => workController.abort(cancelled()), REQUEST_TIMEOUT_MS)
     workTimer.unref?.()
-    const work = produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, route: override, receivedAt, signal: workController.signal })
+    const work = produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, route: override, receivedAt, signal: workController.signal, progress })
       .finally(() => clearTimeout(workTimer))
     composeInFlight.set(key, work)
     try {
@@ -1759,8 +1776,15 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     trace('stream-end', {
       sessionId,
       status,
+      path: progress.path,
+      provider: effectiveRoute?.provider ?? null,
+      model: effectiveRoute?.model ?? null,
+      effort: override?.reasoningEffort ?? null,
       painted: progress.painted,
       paintedChars: progress.paintedChars,
+      chars: progress.chars,
+      reasoning: progress.reasoning,
+      finish: progress.finish,
       ms: Date.now() - receivedAt,
     })
   }
@@ -1795,7 +1819,7 @@ const composeInFlight = new Map()
  * the caller, which had grown past a screen.
  */
 async function composeShortDraft(ctx, session, events, options) {
-  const { cleanDraft, context, locale, forced, key, send, signal, route: override } = options
+  const { cleanDraft, context, locale, forced, key, send, signal, route: override, progress = null, receivedAt } = options
       const shortContext = transcriptOf(events, { ...CONTEXT_BUDGET.short, focus: cleanDraft }) || '[]'
       const shortPrompt = buildShortDraftPrompt({
         draft: cleanDraft,
@@ -1805,7 +1829,28 @@ async function composeShortDraft(ctx, session, events, options) {
         style: styleProfile(events),
         language: resolveLanguage({ locale, forced }),
       })
-      const short = await ask(ctx, session, events, COMPOSE_RULES, shortPrompt, signal, undefined, 'compose', override)
+      // This branch answers in one shot and never streams, so the only record of its
+      // wait used to be the total. Time the first token anyway: it is the number the
+      // client's 120 ms debounce competes with.
+      const shortStartedAt = Date.now()
+      let shortLogged = false
+      const shortDelta = (delta) => {
+        if (shortLogged || typeof delta !== 'string' || delta === '') return
+        shortLogged = true
+        trace('first-delta', {
+          path: 'short',
+          painted: false,
+          queueMs: receivedAt === undefined ? null : shortStartedAt - receivedAt,
+          modelMs: Date.now() - shortStartedAt,
+          chars: Array.from(delta).length,
+        })
+      }
+      const short = await ask(ctx, session, events, COMPOSE_RULES, shortPrompt, signal, shortDelta, 'compose', override)
+      if (progress !== null) {
+        progress.finish = short.finish?.kind ?? null
+        progress.chars = Array.from(short.text ?? '').length
+        progress.reasoning = short.reasoning ?? 0
+      }
       const parsedShort = parseComposeReply(short.text, cleanDraft, {
         language: resolveLanguage({ locale, forced }),
         allowTail: true,
@@ -1826,14 +1871,15 @@ async function composeShortDraft(ctx, session, events, options) {
       return true
 }
 
-async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal, receivedAt, route: override }) {
+async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal, receivedAt, route: override, progress = null }) {
   try {
     // Two or three characters can only take a guess: the short-draft prompt gives one
     // or stays silent. Anything longer goes to the main compose, which can rewrite as
     // well as append — routing it to the short prompt made suggestions disappear.
     const draftLength = Array.from(String(cleanDraft ?? '')).length
     if (draftLength < MIN_TAIL_DRAFT_CHARS) {
-      await composeShortDraft(ctx, session, events, { cleanDraft, locale, forced, key, send, signal, route: override })
+      if (progress !== null) progress.path = 'short'
+      await composeShortDraft(ctx, session, events, { cleanDraft, locale, forced, key, send, signal, route: override, progress, receivedAt })
       return
     }
     const context = transcriptOf(events, { ...CONTEXT_BUDGET.main, focus: cleanDraft }) || '[]'
@@ -1881,6 +1927,7 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
         // (request read, session lookup, cache key) and everything inside it. The one
         // merged number said "slow" without saying which half to fix.
         trace('first-delta', {
+          path: 'main',
           queueMs: receivedAt === undefined ? null : startedAt - receivedAt,
           modelMs: Date.now() - startedAt,
           chars: delta.length,
@@ -1898,6 +1945,12 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
       const lead = head.replace(/^\s+/, '')
       if (/^rewrite\s*:/i.test(lead) || lead.length >= 12) decide(head)
     }, mainMode, override)
+    if (progress !== null) {
+      progress.path = 'main'
+      progress.finish = first.finish?.kind ?? null
+      progress.chars = Array.from(first.text ?? '').length
+      progress.reasoning = first.reasoning ?? 0
+    }
     if (!decided) decide(head)
     const replyRaw = first.text
     const parsed = parseComposeReply(replyRaw, cleanDraft, {

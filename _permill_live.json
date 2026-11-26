@@ -1,0 +1,197 @@
+[
+  [
+    "draft帮",
+    [
+      {
+        "id": "draft帮",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮",
+        "firstChunkAt": 154,
+        "firstContentAt": 1436,
+        "totalMs": 1509,
+        "textChars": 32,
+        "reasoningChars": 301,
+        "finish": "stop",
+        "hit": 640,
+        "text": "我先把 auth.test.ts 这条用例改成串行跑试试，行吗？"
+      },
+      {
+        "id": "draft帮",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮",
+        "firstChunkAt": 99,
+        "firstContentAt": 1116,
+        "totalMs": 1158,
+        "textChars": 32,
+        "reasoningChars": 260,
+        "finish": "stop",
+        "hit": 640,
+        "text": "我把 auth.test.ts 里最不稳的那条先改成串行跑一下？"
+      },
+      {
+        "id": "draft帮",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮",
+        "firstChunkAt": 97,
+        "firstContentAt": 838,
+        "totalMs": 884,
+        "textChars": 28,
+        "reasoningChars": 210,
+        "finish": "stop",
+        "hit": 640,
+        "text": "我把 auth.test.ts 里这条用例改成串行执行吧"
+      },
+      {
+        "id": "draft帮",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮",
+        "firstChunkAt": 113,
+        "firstContentAt": 992,
+        "totalMs": 1061,
+        "textChars": 34,
+        "reasoningChars": 319,
+        "finish": "stop",
+        "hit": 640,
+        "text": "我把 auth.test.ts 这条最不稳定的用例改成串行跑，先试试"
+      }
+    ]
+  ],
+  [
+    "draft帮我",
+    [
+      {
+        "id": "draft帮我",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮我",
+        "firstChunkAt": 108,
+        "firstContentAt": 1096,
+        "totalMs": 1111,
+        "textChars": 38,
+        "reasoningChars": 234,
+        "finish": "stop",
+        "hit": 640,
+        "text": "帮我把 auth.test.ts 这条用例先改成串行跑，把最不稳的这条固定住"
+      },
+      {
+        "id": "draft帮我",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮我",
+        "firstChunkAt": 105,
+        "firstContentAt": 1436,
+        "totalMs": 1495,
+        "textChars": 29,
+        "reasoningChars": 300,
+        "finish": "stop",
+        "hit": 640,
+        "text": "先给 auth.test.ts 那条用例加上串行执行试试？"
+      },
+      {
+        "id": "draft帮我",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮我",
+        "firstChunkAt": 93,
+        "firstContentAt": 798,
+        "totalMs": 911,
+        "textChars": 32,
+        "reasoningChars": 184,
+        "finish": "stop",
+        "hit": 640,
+        "text": "先把 auth.test.ts 里最不稳的那条用例改成串行执行吧"
+      },
+      {
+        "id": "draft帮我",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮我",
+        "firstChunkAt": 109,
+        "firstContentAt": 1368,
+        "totalMs": 1465,
+        "textChars": 39,
+        "reasoningChars": 392,
+        "finish": "stop",
+        "hit": 640,
+        "text": "把 auth.test.ts 这条先改成串行执行，加锁具体要改哪里也一并说一下"
+      }
+    ]
+  ],
+  [
+    "draft帮我把",
+    [
+      {
+        "id": "draft帮我把",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮我把",
+        "firstChunkAt": 120,
+        "firstContentAt": 1255,
+        "totalMs": 1312,
+        "textChars": 35,
+        "reasoningChars": 321,
+        "finish": "stop",
+        "hit": 640,
+        "text": "auth.test.ts 这个用例改成串行执行，先看看 CI 还挂不挂"
+      },
+      {
+        "id": "draft帮我把",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮我把",
+        "firstChunkAt": 277,
+        "firstContentAt": 799,
+        "totalMs": 830,
+        "textChars": 24,
+        "reasoningChars": 177,
+        "finish": "stop",
+        "hit": 640,
+        "text": "auth.test.ts 这个用例改成串行执行吧"
+      },
+      {
+        "id": "draft帮我把",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮我把",
+        "firstChunkAt": 125,
+        "firstContentAt": 804,
+        "totalMs": 875,
+        "textChars": 34,
+        "reasoningChars": 164,
+        "finish": "stop",
+        "hit": 640,
+        "text": "auth.test.ts 这个用例改成串行执行，先看 CI 还挂不挂"
+      },
+      {
+        "id": "draft帮我把",
+        "model": "deepseek-flash",
+        "effort": "xhigh",
+        "cap": 1536,
+        "draft": "帮我把",
+        "firstChunkAt": 108,
+        "firstContentAt": 1395,
+        "totalMs": 1449,
+        "textChars": 34,
+        "reasoningChars": 251,
+        "finish": "stop",
+        "hit": 640,
+        "text": "auth.test.ts 这个用例先改成串行跑，看看 CI 还挂不挂"
+      }
+    ]
+  ]
+]

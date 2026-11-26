@@ -2899,6 +2899,7 @@ group('host: stream telemetry')
       assert.equal(routes[0].model, 'trace-model')
       assert.equal(routes[0].provider, 'p')
       assert.equal(routes[0].mode, 'compose')
+      assert.equal(routes[0].sessionId, 's-trace', 'route-effective names its session')
     })
   })
 
@@ -2919,6 +2920,57 @@ group('host: stream telemetry')
       assert.equal(ends[0].status, 'cancelled')
       assert.equal(ends[0].painted, false)
       assert.equal(ends[0].paintedChars, 0)
+    })
+  })
+
+  await checkAsync('a stream that thinks before it speaks counts the thinking', async () => {
+    await withTempState(async (dir) => {
+      await composeStream(
+        mkCtx(function* () {
+          yield { type: 'reasoning-delta', text: '先看日志时间' }
+          yield { type: 'text-delta', text: '，超时在 10:35 之后。' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        }),
+        { sessionId: 's-trace', draft: '看看这段日志里哪一行先超时' },
+        mkRes(),
+        new AbortController().signal,
+      )
+      const ends = await readTrace(dir, 'stream-end')
+      assert.equal(ends.length, 1)
+      // Without this, a slow reply looks identical whether the model was thinking
+      // or the network was stalling — the two need opposite fixes.
+      assert.ok(ends[0].reasoning >= 6, 'reasoning counts the thinking characters')
+      assert.ok(ends[0].chars > 0, 'chars counts the answer, separately')
+      assert.equal(ends[0].finish, 'stop')
+      assert.equal(ends[0].path, 'main')
+    })
+  })
+
+  await checkAsync('a two-character draft is timed even though it never streams', async () => {
+    await withTempState(async (dir) => {
+      const res = mkRes()
+      const receivedAt = Date.now() - 30
+      // Under MIN_TAIL_DRAFT_CHARS the host answers in one shot with no deltas at
+      // all, so this branch used to be invisible in every wait statistic.
+      await composeStream(
+        mkCtx(function* () {
+          yield { type: 'text-delta', text: '把这段日志整理成三条要点' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        }),
+        { sessionId: 's-trace', draft: '好', receivedAt },
+        res,
+        new AbortController().signal,
+      )
+      const ends = await readTrace(dir, 'stream-end')
+      assert.equal(ends.length, 1)
+      assert.equal(ends[0].path, 'short', 'the short branch is labelled, not guessed')
+      assert.ok(ends[0].ms >= 30)
+      const firsts = await readTrace(dir, 'first-delta')
+      assert.equal(firsts.length, 1, 'the one-shot branch still gets a first token time')
+      assert.equal(firsts[0].path, 'short')
+      assert.equal(firsts[0].painted, false, 'timing only: nothing unparsed reached the browser')
+      assert.ok(firsts[0].modelMs >= 0)
+      assert.ok(firsts[0].queueMs >= 30, 'queueMs still measures the wait before the call')
     })
   })
 }
