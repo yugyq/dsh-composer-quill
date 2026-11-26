@@ -985,7 +985,7 @@ function transcriptStamp(events) {
   return `${tail.length}:${hash.toString(36)}`
 }
 
-function cacheKey(sessionId, mode, draft, events, route, language = '', epoch = 0) {
+function cacheKey(sessionId, mode, draft, events, route, language = '', epoch = 0, effort = '') {
   const last = Array.isArray(events) && events.length > 0 ? events[events.length - 1] : null
   // Switching the model produces no Session event: without the route in the key
   // an answer from the previous model would be replayed for up to two minutes.
@@ -996,7 +996,7 @@ function cacheKey(sessionId, mode, draft, events, route, language = '', epoch = 
   // or jitter (a Session switching in loads its events a moment later), which made
   // identical situations miss each other. The turn counter is the authoritative
   // answer to "has anything happened", so it carries that job alone.
-  return `${sessionId}|${mode}|${maskSecrets(draft)}|${transcriptStamp(events)}|${model}|${language}|${epoch}`
+  return `${sessionId}|${mode}|${maskSecrets(draft)}|${transcriptStamp(events)}|${model}|${language}|${epoch}|${effort}`
 }
 
 function cached(key) {
@@ -1503,14 +1503,18 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     const events = eventsOf(session)
     const cleanDraft = typeof draft === 'string' ? draft.slice(0, MAX_DRAFT_CHARS) : ''
     if (cleanDraft.trim() === '') throw httpError('draft is required for a compose request', 400)
+    // The route that will actually be used, not the Session's: a model pick or a
+    // thinking setting in Settings changes the answer and must change the key.
+    const effectiveRoute = routeOf(override) ?? routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx)
     const key = cacheKey(
       sessionId,
       'compose',
       cleanDraft,
       events,
-      routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx),
+      effectiveRoute,
       resolveLanguage({ locale, forced }),
       epoch,
+      override?.reasoningEffort ?? '',
     )
     const hit = cached(key)
     if (hit !== undefined) {
@@ -1790,14 +1794,16 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0,
   const kind = cleanDraft.trim() !== '' && mode !== 'next' ? 'compose' : 'next'
   if (kind === 'next' && !hasTurns) return { kind: 'next', candidates: [], reason: 'empty-thread' }
 
+  const effectiveRoute = routeOf(override) ?? routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx)
   const key = cacheKey(
     sessionId,
     kind,
     kind === 'next' ? '' : cleanDraft,
     events,
-    routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx),
+    effectiveRoute,
     resolveLanguage({ locale, forced }),
     epoch,
+    override?.reasoningEffort ?? '',
   )
   const hit = cached(key)
   if (hit !== undefined) {
@@ -1938,7 +1944,9 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
         rawHead: typeof text === 'string' ? text.slice(0, 120) : '',
       })
     }
-    remember(key, value)
+    // Zero candidates is a negative outcome: caching it for the full two minutes left the
+    // retry button hitting the same empty entry while the cause had long gone.
+    remember(key, value, candidates.length === 0 ? NEGATIVE_TTL_MS : undefined)
     return value
   }
 
@@ -2013,6 +2021,20 @@ function respond(res, statusCode, payload) {
 }
 
 /** True when the request's Host header names this machine. */
+/**
+ * Is this request coming from this machine? The socket is the only part of a request a
+ * caller cannot write: Host, sec-fetch-* and custom headers are all theirs to forge.
+ */
+function isLoopbackPeer(req) {
+  const address = req?.socket?.remoteAddress ?? req?.connection?.remoteAddress ?? ''
+  if (typeof address !== 'string' || address === '') return false
+  return address === '::1'
+    || address === '127.0.0.1'
+    || address === '::ffff:127.0.0.1'
+    || /^::ffff:127\./.test(address)
+    || /^127\./.test(address)
+}
+
 function isLoopbackHost(value) {
   if (typeof value !== 'string' || value === '') return false
     // Bracketed IPv6 keeps its colons; stripping the port there would eat the 1.
@@ -2025,11 +2047,10 @@ function isLoopbackHost(value) {
 }
 
 /**
- * Accept a request when it carries the per-start token, or when it proves a
- * same-origin browser context: `sec-fetch-*` headers are set by the browser and
- * cannot be produced by a plain HTTP client, and a JSON content type forces a
- * CORS preflight from any other origin. This keeps the routes usable when the
- * page is served without the token row (static or shell-rendered index).
+ * Accept a request when it carries the per-start token, or when it comes from this
+ * machine over a same-origin browser context. The socket decides the second case —
+ * headers are written by the caller, so they only narrow an already-local request.
+ * That keeps the routes usable when the index page is served without the token row.
  */
 /**
  * Method and auth for every route, so the three handlers cannot drift apart again —
@@ -2054,11 +2075,11 @@ function preflight(req, res, token, options) {
 
 function authorized(req, token) {
   if (req.headers[TOKEN_HEADER] === token) return true
-  // The header path exists for an index page served without the token row. It is
-  // only safe on a loopback host: a DNS-rebound page keeps its own Host name, so a
-  // loopback Host check closes the rebinding hole the header check left open.
-  // A real browser always sends Host; only reject a Host that names another site,
-  // which is exactly what a DNS-rebound page keeps.
+  // The header path exists for an index page served without the token row. Every header
+  // below is written by the caller, so the decision rests on the socket first: a request
+  // that did not arrive from this machine gets nothing, whatever its headers say.
+  if (!isLoopbackPeer(req)) return false
+  // A loopback peer still might be a DNS-rebound page, which keeps its own Host name.
   if (req.headers.host !== undefined && !isLoopbackHost(req.headers.host)) return false
   const site = req.headers['sec-fetch-site']
   const mode = req.headers['sec-fetch-mode']
@@ -2424,7 +2445,18 @@ export function apply(ctx) {
 }
 
 /** Pure helpers exposed for the offline smoke test. */
-export const __test = { handleModels, produceCompose, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
+/** Every cache entry with its remaining life, so tests need not rebuild keys. */
+function cacheEntries() {
+  const now = Date.now()
+  return [...cache.entries()].map(([key, entry]) => ({
+    key,
+    value: entry.value,
+    ttl: entry.ttl ?? CACHE_TTL_MS,
+    expiresInMs: (entry.ttl ?? CACHE_TTL_MS) - (now - entry.at),
+  }))
+}
+
+export const __test = { handleModels, produceCompose, predict, cacheEntries, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
 
 
 

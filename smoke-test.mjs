@@ -352,6 +352,7 @@ check('a one-character draft is asked for a full short sentence', () => {
   const request = (body) => new Promise((resolve) => {
     const req = new EventEmitter()
     req.method = 'POST'
+    req.socket = { remoteAddress: '127.0.0.1' }
     req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
     const res = new EventEmitter()
     res.statusCode = 0
@@ -738,17 +739,17 @@ check('authorized accepts the token or a browser that sent the preflight header'
   const { authorized } = host.__test
   const token = 'abc'
   const client = { 'x-composer-quill-client': '1', 'content-type': 'application/json' }
-  assert.equal(authorized({ headers: { 'x-composer-quill-token': token, 'content-type': 'application/json' } }, token), true)
-  assert.equal(authorized({ headers: { 'x-composer-quill-token': 'other', 'content-type': 'application/json' } }, token), false)
+  assert.equal(authorized({ socket: { remoteAddress: '127.0.0.1' }, headers: { 'x-composer-quill-token': token, 'content-type': 'application/json' } }, token), true)
+  assert.equal(authorized({ socket: { remoteAddress: '127.0.0.1' }, headers: { 'x-composer-quill-token': 'other', 'content-type': 'application/json' } }, token), false)
   // Without the custom header there is no preflight barrier: reject.
-  assert.equal(authorized({ headers: { 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' } }, token), false)
-  assert.equal(authorized({ headers: { ...client, 'sec-fetch-site': 'same-origin' } }, token), true)
-  assert.equal(authorized({ headers: { ...client, 'sec-fetch-site': 'cross-site' } }, token), false)
+  assert.equal(authorized({ socket: { remoteAddress: '127.0.0.1' }, headers: { 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' } }, token), false)
+  assert.equal(authorized({ socket: { remoteAddress: '127.0.0.1' }, headers: { ...client, 'sec-fetch-site': 'same-origin' } }, token), true)
+  assert.equal(authorized({ socket: { remoteAddress: '127.0.0.1' }, headers: { ...client, 'sec-fetch-site': 'cross-site' } }, token), false)
   // A local process can type any header: without the browser's own signal it is
   // not treated as same-origin.
-  assert.equal(authorized({ headers: { ...client } }, token), false)
-  assert.equal(authorized({ headers: { 'content-type': 'application/json' } }, token), false)
-  assert.equal(authorized({ headers: { ...client, 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate' } }, token), false)
+  assert.equal(authorized({ socket: { remoteAddress: '127.0.0.1' }, headers: { ...client } }, token), false)
+  assert.equal(authorized({ socket: { remoteAddress: '127.0.0.1' }, headers: { 'content-type': 'application/json' } }, token), false)
+  assert.equal(authorized({ socket: { remoteAddress: '127.0.0.1' }, headers: { ...client, 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate' } }, token), false)
 })
 
 // -------------------------------------------------------------- Client half
@@ -1125,6 +1126,7 @@ check('settings row renders the mode, pause and timeout controls', () => {
     await new Promise((resolve) => {
       const req = new EventEmitter()
       req.method = 'POST'
+      req.socket = { remoteAddress: '127.0.0.1' }
       req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
       const res = new EventEmitter()
       res.statusCode = 0
@@ -1241,6 +1243,7 @@ await checkAsync('trailing newline still yields a tail proposal', async () => {
   const call = () => new Promise((resolve) => {
     const req = new EventEmitter()
     req.method = 'POST'
+    req.socket = { remoteAddress: '127.0.0.1' }
     req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
     const res = new EventEmitter()
     res.statusCode = 0
@@ -1295,6 +1298,7 @@ await checkAsync('trailing newline still yields a tail proposal', async () => {
   const call = () => new Promise((resolve) => {
     const req = new EventEmitter()
     req.method = 'POST'
+    req.socket = { remoteAddress: '127.0.0.1' }
     req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
     const res = new EventEmitter()
     res.statusCode = 0
@@ -1350,6 +1354,7 @@ await checkAsync('trailing newline still yields a tail proposal', async () => {
   const streamCall = () => new Promise((resolve) => {
     const req = new EventEmitter()
     req.method = 'POST'
+    req.socket = { remoteAddress: '127.0.0.1' }
     req.headers = {
       'content-type': 'application/json',
       accept: 'text/event-stream',
@@ -1638,6 +1643,7 @@ group('client: audit findings')
       await new Promise((resolve) => {
         const req = new EventEmitter()
         req.method = 'POST'
+        req.socket = { remoteAddress: '127.0.0.1' }
         req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
         const res = new EventEmitter()
         res.statusCode = 0
@@ -1689,6 +1695,7 @@ group('client: audit findings')
   const call = () => new Promise((resolve) => {
     const req = new EventEmitter()
     req.method = 'POST'
+    req.socket = { remoteAddress: '127.0.0.1' }
     req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
     const res = new EventEmitter()
     res.statusCode = 0
@@ -1744,6 +1751,7 @@ group('client: audit findings')
   const call = (epoch) => new Promise((resolve) => {
     const req = new EventEmitter()
     req.method = 'POST'
+    req.socket = { remoteAddress: '127.0.0.1' }
     req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
     const res = new EventEmitter()
     res.statusCode = 0
@@ -1799,6 +1807,7 @@ group('client: audit findings')
   const call = (language) => new Promise((resolve) => {
     const req = new EventEmitter()
     req.method = 'POST'
+    req.socket = { remoteAddress: '127.0.0.1' }
     req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
     const res = new EventEmitter()
     res.statusCode = 0
@@ -1828,7 +1837,9 @@ group('host: security')
 
 {
   const api = host.__test
-  const req = (headers) => ({ headers })
+  // Every fake request here comes from this machine: the auth decision now rests on
+  // the socket, so the helper provides one.
+  const req = (headers, remoteAddress = '127.0.0.1') => ({ headers, socket: { remoteAddress } })
 
   check('a rebound Host cannot ride the header path', () => {
     assert.equal(
@@ -2401,6 +2412,113 @@ group('host: usage')
     assert.equal(isPeak(sunday), false)
   })
 
+  await checkAsync('switching model or thinking setting cannot replay the previous answer', async () => {
+    const { predict } = host.__test
+    const calls = []
+    const session = {
+      id: 's-key',
+      requestHeader: () => ({ config: { provider: 'p', model: 'session-model' } }),
+      snapshotEvents: () => events,
+    }
+    const ctx = {
+      get: () => undefined,
+      agents: { get: () => ({ session }) },
+      llm: {
+        async *stream(options) {
+          calls.push(`${options.provider}/${options.model}/${options.reasoningEffort ?? '-'}`)
+          yield { type: 'text-delta', text: '一组建议' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      },
+    }
+    const events = [
+      { type: 'request/header', data: { header: { config: { provider: 'p', model: 'session-model' } } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '帮我把这段日志整理一下' }] } },
+      { type: 'assistant/message', data: { content: [{ type: 'text', text: '好的。' }] } },
+    ]
+    const base = {
+      sessionId: 's-key',
+      session,
+      events,
+      hasTurns: true,
+      kind: 'next',
+      cleanDraft: '',
+      locale: 'zh-CN',
+      forced: '',
+      signal: new AbortController().signal,
+    }
+
+    // Same question, three different model preferences: three separate answers.
+    await predict(ctx, { ...base, key: 'k1', route: { provider: 'a', model: 'm1' } }, new AbortController().signal)
+    await predict(ctx, { ...base, key: 'k1', route: { provider: 'a', model: 'm2' } }, new AbortController().signal)
+    await predict(ctx, { ...base, key: 'k1', route: { provider: 'a', model: 'm2', reasoningEffort: 'high' } }, new AbortController().signal)
+    assert.equal(calls.length, 3, `calls=${JSON.stringify(calls)}`)
+
+    // And the same preference twice is still one call: the cache works.
+    await predict(ctx, { ...base, key: 'k1', route: { provider: 'a', model: 'm2', reasoningEffort: 'high' } }, new AbortController().signal)
+    assert.equal(calls.length, 3, 'the identical preference should have been a cache hit')
+  })
+
+  await checkAsync('an empty next-message set is not cached for two minutes', async () => {
+    const { predict } = host.__test
+    let calls = 0
+    const session = { id: 's-empty', requestHeader: () => ({ config: { provider: 'p', model: 'm' } }), snapshotEvents: () => events }
+    const ctx = {
+      get: () => undefined,
+      agents: { get: () => ({ session }) },
+      llm: {
+        async *stream() {
+          calls += 1
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      },
+    }
+    const events = [
+      { type: 'request/header', data: { header: { config: { provider: 'p', model: 'm' } } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '帮我把这段日志整理一下' }] } },
+      { type: 'assistant/message', data: { content: [{ type: 'text', text: '好的。' }] } },
+    ]
+    const base = {
+      sessionId: 's-empty', session, events, hasTurns: true, kind: 'next', cleanDraft: '',
+      locale: 'zh-CN', forced: '', key: 'empty-key', signal: new AbortController().signal,
+    }
+    const first = await predict(ctx, base, new AbortController().signal)
+    assert.equal(first.candidates.length, 0)
+    assert.equal(calls, 1)
+    // The entry exists, but on the short negative lifetime: the two-minute one would have
+    // kept the retry button answering from cache long after the model had recovered.
+    const { cacheEntries } = host.__test
+    const entries = cacheEntries().filter((item) => Array.isArray(item.value?.candidates))
+    assert.equal(entries.length > 0, true, 'the empty result was not cached at all')
+    const entry = entries[entries.length - 1]
+    assert.ok(
+      entry.expiresInMs <= 10_500,
+      `negative entry lives for ${Math.round(entry.expiresInMs / 1000)}s, expected the 10s negative TTL`,
+    )
+  })
+
+  await checkAsync('a request from another machine is refused even with perfect headers', async () => {
+    const { authorized } = host.__test
+    const token = 'test-token'
+    const perfect = {
+      host: 'localhost:5173',
+      'sec-fetch-site': 'same-origin',
+      'sec-fetch-mode': 'cors',
+      'x-composer-quill-client': '1',
+      'content-type': 'application/json',
+    }
+
+    // Perfect headers, wrong machine: every header there is the caller's to write.
+    assert.equal(authorized({ headers: perfect, socket: { remoteAddress: '203.0.113.7' } }, token), false)
+    // No socket at all is not evidence of a loopback request either.
+    assert.equal(authorized({ headers: perfect }, token), false)
+    // From this machine, the header path still works for a page served without the token.
+    assert.equal(authorized({ headers: perfect, socket: { remoteAddress: '127.0.0.1' } }, token), true)
+    assert.equal(authorized({ headers: perfect, socket: { remoteAddress: '::1' } }, token), true)
+    // The token itself is never restricted to loopback.
+    assert.equal(authorized({ headers: { 'x-composer-quill-token': token }, socket: { remoteAddress: '203.0.113.7' } }, token), true)
+  })
+
   await checkAsync('the model list comes from the Host and is cached', async () => {
     const { handleModels } = host.__test
     let listed = 0
@@ -2422,6 +2540,7 @@ group('host: usage')
     const ask = () => new Promise((resolve) => {
       const req = new EventEmitter()
       req.method = 'POST'
+      req.socket = { remoteAddress: '127.0.0.1' }
       req.headers = {
         'content-type': 'application/json',
         'sec-fetch-site': 'same-origin',
