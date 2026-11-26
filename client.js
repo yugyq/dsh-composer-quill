@@ -550,6 +550,9 @@ const COVERED_DEBOUNCE_MS = 1200
       let controller = null
       let acc = ''
       let streamMode = 'full'
+      // True while a streamed proposal is on screen and its request is still open: a
+      // cancel then means the text must go, not just the request.
+      let streaming = false
       // The draft this stream was requested for. A retained proposal may belong
       // to an older draft, so the base must come from the request, not the store.
       let streamBase = ''
@@ -567,10 +570,19 @@ const COVERED_DEBOUNCE_MS = 1200
       return {
         getSnapshot: store.getSnapshot,
         subscribe: store.subscribe,
-        cancel,
+        cancel: () => {
+          cancel()
+          if (!streaming) return
+          streaming = false
+          acc = ''
+          streamMode = 'full'
+          streamBase = ''
+          store.set(IDLE)
+        },
         /** Streaming compose: same snapshot shape, filled in as deltas arrive. */
         streamStart: (sessionId, kind, forDraft) => {
           cancel()
+          streaming = true
           controller = new AbortController()
           acc = ''
           streamMode = 'full'
@@ -612,6 +624,8 @@ const COVERED_DEBOUNCE_MS = 1200
           store.set({ ...current, phase: 'ready', items: [proposalOf()], forDraft: current.requested ?? current.forDraft })
         },
         streamFinal: (text, mode) => {
+          streaming = false
+
           const current = store.getSnapshot()
           if (mode === 'append' || mode === 'full') streamMode = mode
           if (typeof text === 'string') {
@@ -625,6 +639,7 @@ const COVERED_DEBOUNCE_MS = 1200
           store.set({ ...current, phase: 'ready', items: [proposalOf()], forDraft: current.requested ?? current.forDraft })
         },
         streamDone: (meta) => {
+          streaming = false
           controller = null
           const current = store.getSnapshot()
           const items = usableItems(current.items)
@@ -644,6 +659,7 @@ const COVERED_DEBOUNCE_MS = 1200
           })
         },
         streamFail: (message) => {
+          streaming = false
           controller = null
           const current = store.getSnapshot()
           // Keep the retry budget pointed at the right draft: forDraft must follow
