@@ -4,7 +4,7 @@ Completion for the DSH composer. When a turn settles it offers a few next messag
 
 [中文说明](README.md)
 
-> If it makes your composer a little quicker, a [Star](https://github.com/yugyq/dsh-composer-quill) is enough.
+> If it helps, give it a [Star](https://github.com/yugyq/dsh-composer-quill).
 
 ![Next message: candidates while the composer is empty, with the position shown on the chip](docs/assets/real-next.png)
 
