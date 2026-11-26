@@ -1651,10 +1651,17 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
   let effectiveRoute = null
   // `path` says which branch answered: drafts under MIN_TAIL_DRAFT_CHARS take the
   // short prompt, which never streams, so a split of the wait is useless without it.
-  const progress = { painted: false, paintedChars: 0, path: 'main', finish: null, chars: 0, reasoning: 0 }
+  const progress = { painted: false, delivered: false, paintedChars: 0, path: 'main', finish: null, chars: 0, reasoning: 0 }
   const send = (event, payload) => {
+    // The short branch never streams: it answers with one `final` frame. Counting
+    // only deltas labelled every one of those suggestions as "silent" — 28 out of
+    // 28 in the first measured batch, all of which the browser did receive.
     if (event === 'delta' && typeof payload?.text === 'string' && payload.text !== '') {
       progress.painted = true
+      progress.paintedChars += Array.from(payload.text).length
+    }
+    if (event === 'final' && typeof payload?.text === 'string' && payload.text !== '') {
+      progress.delivered = true
       progress.paintedChars += Array.from(payload.text).length
     }
     raw(event, payload)
@@ -1755,7 +1762,7 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     } finally {
       composeInFlight.delete(key)
     }
-    status = progress.painted ? 'painted' : 'silent'
+    status = progress.painted || progress.delivered ? 'painted' : 'silent'
     res.end()
     return
   } catch (error) {
@@ -1781,6 +1788,7 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
       model: effectiveRoute?.model ?? null,
       effort: override?.reasoningEffort ?? null,
       painted: progress.painted,
+      delivered: progress.delivered,
       paintedChars: progress.paintedChars,
       chars: progress.chars,
       reasoning: progress.reasoning,

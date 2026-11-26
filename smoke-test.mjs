@@ -3008,7 +3008,7 @@ group('host: stream telemetry')
   })
 
   await checkAsync('a one-character draft never pays for thinking', async () => {
-    await withTempState(async () => {
+    await withTempState(async (dir) => {
       const seen = []
       const ctx = {
         get: () => undefined,
@@ -3030,6 +3030,15 @@ group('host: stream telemetry')
         new AbortController().signal,
       )
       assert.deepEqual(seen, ['off'], 'the short branch asks for no thinking at all')
+
+      // The one-shot branch answers with a `final` frame and no delta. Counting only
+      // deltas labelled every short suggestion as silent, which is what the log said
+      // for 28 out of 28 measured requests that the browser did receive.
+      const ends = await readTrace(dir, 'stream-end')
+      assert.equal(ends.length, 1)
+      assert.equal(ends[0].delivered, true)
+      assert.equal(ends[0].status, 'painted', 'a delivered one-shot answer is not silent')
+      assert.ok(ends[0].paintedChars > 0)
     })
   })
 }
