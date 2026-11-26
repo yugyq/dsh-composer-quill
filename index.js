@@ -15,8 +15,8 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { existsSync, readFileSync, renameSync, statSync } from 'node:fs'
-import { appendFile, readFile as readFileAsync, rename as renameAsync, writeFile as writeFileAsync } from 'node:fs/promises'
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
+import { appendFile, open as openAsync, readFile as readFileAsync, rename as renameAsync } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -175,6 +175,45 @@ const LOG_MAX_BYTES = 2 * 1024 * 1024
 // A debounced write can overlap an explicit one (the reset button). With a pid-only temp
 // name both wrote the same file and the second rename could land half-written JSON.
 let stateFileSeq = 0
+
+/**
+ * Write a file and put it on the disk before returning. `rename` is atomic, but only
+ * against a kill: if the machine loses power before the data reaches the disk, the
+ * rename can publish an empty file. fsync first, then rename.
+ */
+/**
+ * Remove temp files a dead process left behind. Only ones older than ten minutes: a
+ * flush that is running right now owns its own temp, and deleting it would make that
+ * rename fail.
+ */
+function sweepStaleTemps(target) {
+  try {
+    const dir = target.slice(0, Math.max(target.lastIndexOf('/'), target.lastIndexOf('\\')))
+    const prefix = target.slice(dir.length + 1)
+    const now = Date.now()
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith(prefix) || !name.endsWith('.tmp')) continue
+      const full = join(dir, name)
+      try {
+        if (now - statSync(full).mtimeMs > 10 * 60_000) rmSync(full, { force: true })
+      } catch {
+        // Another process may have removed it first.
+      }
+    }
+  } catch {
+    // A missing directory is not an error worth reporting.
+  }
+}
+
+async function writeFileDurable(file, data) {
+  const handle = await openAsync(file, 'w')
+  try {
+    await handle.writeFile(data)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
 let traceCount = 0
 
 /** Keep one previous log: a runaway diagnostic must not fill the disk. */
@@ -1040,7 +1079,7 @@ function scheduleCacheSave() {
       const temp = `${file}.${process.pid}.${(stateFileSeq += 1)}.tmp`
       // Writing is off the hot path, but a few hundred kilobytes of sync IO still
       // blocks every Session: hand it to the thread pool.
-      void writeFileAsync(temp, JSON.stringify({ version: 1, entries: entries.slice(-CACHE_CAPACITY) }), 'utf8')
+      void writeFileDurable(temp, JSON.stringify({ version: 1, entries: entries.slice(-CACHE_CAPACITY) }))
         .then(() => renameAsync(temp, file))
         .catch(() => {})
     } catch {
@@ -1338,9 +1377,10 @@ async function flushUsage() {
   } catch {
     // No file yet, or unreadable: writing is the right move.
   }
+  sweepStaleTemps(target)
   const temp = `${target}.${process.pid}.${(stateFileSeq += 1)}.tmp`
   try {
-    await writeFileAsync(temp, `${JSON.stringify(usageLedger.data, null, 2)}\n`)
+    await writeFileDurable(temp, `${JSON.stringify(usageLedger.data, null, 2)}\n`)
     await renameAsync(temp, target)
     return true
   } catch {

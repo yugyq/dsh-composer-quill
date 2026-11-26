@@ -10,8 +10,8 @@
 process.env.DSH_COMPOSER_QUILL_NO_CACHE = '1'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute } from 'node:path'
 import { homedir, tmpdir as tmpdirOf } from 'node:os'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -946,6 +946,20 @@ const props = (overrides = {}) => {
     ...overrides,
   }
 }
+
+// ④: a stream that is cancelled mid-flight must not leave a proposal to paint.
+await checkAsync('a cancelled stream leaves nothing to paint', async () => {
+  const face = entryOf('conversation.input.dock').inject()
+  face.ghost.clear()
+  face.ghost.streamStart('s-cancel', 'compose', '草稿')
+  face.ghost.streamDelta('半句')
+  const mid = face.ghost.getSnapshot()
+  face.ghost.cancel()
+  const after = face.ghost.getSnapshot()
+  assert.equal(mid.items.length > 0, true, 'the stream should have painted something first')
+  assert.equal(after.phase !== 'ready', true, 'phase after cancel: ' + after.phase)
+  assert.deepEqual(after.items, [], 'items after cancel: ' + JSON.stringify(after.items))
+})
 
 await checkAsync('mount posts the diagnostic beacon first', async () => {
   calls.length = 0
@@ -2381,6 +2395,37 @@ group('host: usage')
     assert.equal(snap.byModel['deepseek-flash'].calls, 2)
     assert.equal(snap.session.calls, 2)
     assert.equal(snap.today.calls, 2)
+  })
+
+  await checkAsync('a state file is written through a durable handle', async () => {
+    const { flushUsage, noteUsage, usageLedgerPath, resetUsage, loadUsage, usageSnapshot } = host.__test
+    const file = usageLedgerPath()
+    // Whatever is on disk now (another run may have left 300 calls) is the floor.
+    let before = 0
+    try {
+      before = JSON.parse(readFileSync(file, 'utf8'))?.lifetime?.calls ?? 0
+    } catch {
+      before = 0
+    }
+
+    resetUsage()
+    noteUsage({ mode: 'compose', model: 'deepseek-flash', usage: { inputTokens: 11, outputTokens: 5 } })
+    const wrote = await flushUsage()
+
+    const textOnDisk = readFileSync(file, 'utf8')
+    const parsed = JSON.parse(textOnDisk)
+    // Never shrinks, written completely, and readable as JSON whatever happened.
+    assert.equal(parsed.lifetime.calls >= before, true, `disk went from ${before} to ${parsed.lifetime.calls}`)
+    assert.equal(textOnDisk.endsWith('\n'), true, 'the file should end with a newline')
+    if (wrote) assert.equal(textOnDisk.includes('"version": 1'), true)
+
+    // No temp from this write survives it.
+    const temps = readdirSync(dirname(file)).filter((name) => name.includes(`.${process.pid}.`) && name.endsWith('.tmp'))
+    assert.deepEqual(temps, [], `this write left ${temps.join(', ')}`)
+
+    await loadUsage()
+    assert.equal(usageSnapshot({}).lifetime.calls >= before, true)
+    resetUsage()
   })
 
   await checkAsync('a smaller ledger never replaces a bigger one on disk', async () => {
