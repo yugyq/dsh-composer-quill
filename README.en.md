@@ -19,7 +19,7 @@ Everything stays on your machine: requests go through the model route you alread
 
 ## Four kinds of suggestion
 
-Three cost one model call; history costs none.
+Three cost a model call, usually one: completion asks again when the first answer does not parse, and next-message tops up when it gets a single candidate. History costs none.
 
 **Next message**: several when a turn ends, `←` `→` to cycle. Also offered when you return to a Session you have talked in before.
 
