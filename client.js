@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.60'
+    const BUILD = '0.31.61'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -44,6 +44,9 @@ window.__ModuleLoader__.load({
     const CLIENT_HEADER = 'x-composer-quill-client'
       const NEXT_DEBOUNCE_MS = 320
     const COMPOSE_DEBOUNCE_MS = 120
+    // Consecutive suggestions ignored before rewrites are withheld. Three is the
+    // point where the user is clearly not reading them; one accept restores them.
+    const IGNORE_STREAK_LIMIT = 3
 /** While the draft stays inside the on-screen proposal, wait this long. */
 const COVERED_DEBOUNCE_MS = 1200
     /**
@@ -97,6 +100,8 @@ const COVERED_DEBOUNCE_MS = 1200
   'settings.reasoning.high': '高',
   'settings.reasoning.max': '最高',
   'settings.reasoning.hint': '补全用不上深度思考；调高会更慢、更贵，但复杂改写可能更准。',
+  'settings.suppress': '忽略三次后暂停整段改写',
+  'settings.suppress.hint': '连续忽略三条建议后，只保留在句尾接着写；整段改写暂停，采纳一次即恢复。',
       'usage.today': '今天',
       'usage.session': '本会话',
       'usage.lifetime': '累计',
@@ -157,6 +162,8 @@ const COVERED_DEBOUNCE_MS = 1200
   'settings.reasoning.high': 'High',
   'settings.reasoning.max': 'Max',
   'settings.reasoning.hint': 'Completions rarely need deep thinking; higher is slower and dearer, though a tangled rewrite may land better.',
+  'settings.suppress': 'Pause rewrites after three ignores',
+  'settings.suppress.hint': 'After three suggestions in a row go unused, only tails keep arriving; rewrites stay off until one is accepted.',
       'usage.today': 'Today',
       'usage.session': 'This Session',
       'usage.lifetime': 'Lifetime',
@@ -550,6 +557,22 @@ const COVERED_DEBOUNCE_MS = 1200
       let controller = null
       let acc = ''
       let streamMode = 'full'
+      // After a few suggestions ignored in a row, the rewrite is the expensive kind
+      // the user keeps throwing away. Suppression withholds those while tails keep
+      // arriving; the flag lives here because every paint path goes through it.
+      let suppressRewrites = false
+      // The streak lives here too: the ignore sites are spread across sibling hooks
+      // that share nothing but this store.
+      let allowSuppress = true
+      let ignoredStreak = 0
+      const recomputeSuppress = () => {
+        suppressRewrites = allowSuppress && ignoredStreak >= IGNORE_STREAK_LIMIT
+      }
+      // True while the current stream is buffered instead of painted: the mode only
+      // arrives with the `start` frame, and half a rewrite on screen is worse than a
+      // suggestion that shows up whole.
+      let holding = false
+      let lastSuppressed = false
       // True while a streamed proposal is on screen and its request is still open: a
       // cancel then means the text must go, not just the request.
       let streaming = false
@@ -570,6 +593,32 @@ const COVERED_DEBOUNCE_MS = 1200
       return {
         getSnapshot: store.getSnapshot,
         subscribe: store.subscribe,
+        setSuppressRewrites: (flag) => {
+          allowSuppress = flag !== false
+          recomputeSuppress()
+        },
+        /** A suggestion was shown and thrown away. */
+        noteIgnored: () => {
+          ignoredStreak += 1
+          recomputeSuppress()
+          return ignoredStreak
+        },
+        /** One accept earns rewrites back. */
+        noteAccepted: () => {
+          ignoredStreak = 0
+          recomputeSuppress()
+        },
+        /** A Session switch starts over. */
+        resetStreak: () => {
+          ignoredStreak = 0
+          recomputeSuppress()
+        },
+        /** True once, if the last finished stream was withheld on purpose. */
+        takeSuppressed: () => {
+          const was = lastSuppressed
+          lastSuppressed = false
+          return was
+        },
         cancel: () => {
           cancel()
           if (!streaming) return
@@ -587,10 +636,15 @@ const COVERED_DEBOUNCE_MS = 1200
           acc = ''
           streamMode = 'full'
           streamBase = forDraft
+          lastSuppressed = false
+          // A compose answer may still turn out to be a rewrite, so nothing is
+          // painted until the `start` frame says which case it is.
+          holding = suppressRewrites && kind === 'compose'
           const previous = store.getSnapshot()
           // Keep the proposal that is already on screen; the first delta of this
           // request replaces it. Otherwise every keystroke blanks the composer.
-          const keep = previous.sessionId === sessionId
+          const keep = !holding
+            && previous.sessionId === sessionId
             && previous.kind === kind
             && previous.items.length > 0
           store.set({
@@ -608,16 +662,22 @@ const COVERED_DEBOUNCE_MS = 1200
         /** Switch proposal mode without clearing what is already on screen. */
         streamModeSet: (mode) => {
           streamMode = mode === 'append' ? 'append' : 'full'
+          // A tail is welcome even while suppressed: release the hold so the deltas
+          // that follow paint as usual.
+          if (mode === 'append') holding = false
         },
         streamRetract: (mode) => {
           acc = ''
           streamMode = mode === 'append' ? 'append' : 'full'
+          if (streamMode === 'append') holding = false
           const current = store.getSnapshot()
           store.set({ ...current, items: [] })
         },
         streamDelta: (text) => {
           if (typeof text !== 'string' || text === '') return
           acc += text
+          // Withheld: keep the scratch text, leave the composer alone.
+          if (holding) return
           const current = store.getSnapshot()
           // The store may still carry the proposal of an older draft (retention):
           // this result belongs to the draft the stream was requested for.
@@ -628,6 +688,16 @@ const COVERED_DEBOUNCE_MS = 1200
 
           const current = store.getSnapshot()
           if (mode === 'append' || mode === 'full') streamMode = mode
+          if (holding && streamMode === 'full') {
+            // Suppressed rewrite: better silent than covering the draft the user is
+            // still typing.
+            holding = false
+            lastSuppressed = true
+            acc = ''
+            store.set({ ...current, phase: 'empty', items: [], requested: null, forDraft: current.requested ?? current.forDraft })
+            return
+          }
+          holding = false
           if (typeof text === 'string') {
             // The Host sends the whole proposal; rebasing it here keeps the
             // spacing and trailing punctuation that the tail alone would lose.
@@ -683,6 +753,9 @@ const COVERED_DEBOUNCE_MS = 1200
          */
         hydrate: (sessionId, kind, forDraft, items) => {
           if (!Array.isArray(items) || items.length === 0) return false
+          // A stored compose answer may be a rewrite and carries no mode: while
+          // suppressed, keep the store quiet and let a live request decide.
+          if (suppressRewrites && kind === 'compose') return false
           const current = store.getSnapshot()
           if (current.sessionId === sessionId && current.items.length > 0) return false
           if (current.sessionId === sessionId && current.phase === 'loading') return false
@@ -769,6 +842,7 @@ const COVERED_DEBOUNCE_MS = 1200
       timeoutMs: 20000,
       modelRoute: null,   // { provider, model } or null: follow the session
       reasoning: 'off',   // 'off' | 'low' | 'high' | 'max'
+      suppressRewrites: true, // pause rewrites after IGNORE_STREAK_LIMIT ignores
     })
 
     /** Coerce anything we find in storage into a usable configuration. */
@@ -790,6 +864,7 @@ const COVERED_DEBOUNCE_MS = 1200
         timeoutMs: clamp(source.timeoutMs, 3000, 60000, DEFAULT_CONFIG.timeoutMs),
         modelRoute: normalizeModelRoute(source.modelRoute),
         reasoning: normalizeReasoning(source.reasoning),
+        suppressRewrites: source.suppressRewrites !== false,
       }
     }
 
@@ -2163,6 +2238,7 @@ const COVERED_DEBOUNCE_MS = 1200
               bump()
               flush()
               if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode)
+              if (ghost.takeSuppressed?.() === true) report('suppressed', { sessionId: live.sessionId, detail: 'rewrite' })
             },
             done: (data) => {
               flush()
@@ -2404,6 +2480,7 @@ const COVERED_DEBOUNCE_MS = 1200
             return
           }
           if (prior.sessionId !== sessionId) {
+            ghost.resetStreak()
             composing.current = false
             sendDock({ type: 'undismissed' })
             hydratedFor.current = ''
@@ -2458,6 +2535,7 @@ const COVERED_DEBOUNCE_MS = 1200
             if (shown !== null && shown.consumed !== true && Date.now() - shown.at < 120_000) {
               shown.consumed = true
               recordOutcome(shown.features, false)
+              ghost.noteIgnored()
             }
             // A turn started: stop any in-flight request and hide the ghost, but
             // keep the proposal. The row is hidden by `running` anyway, and keeping
@@ -2620,6 +2698,11 @@ const COVERED_DEBOUNCE_MS = 1200
       if (layer.current === null) layer.current = createGhostLayer()
       const ghostLayer = layer.current
       const { history, historyRef, bumpHistoryEpoch } = useComposerHistory(sessionId)
+      // The switch is a preference; the streak is the store's own count.
+      const suppressRewritesOn = settings.suppressRewrites !== false
+      React.useEffect(() => {
+        ghost.setSuppressRewrites?.(suppressRewritesOn)
+      }, [ghost, suppressRewritesOn])
 
       useMountBeacon({ beaconSent, sessionId, session, report, running, draft, props, inputActions, input })
 
@@ -2635,6 +2718,7 @@ const COVERED_DEBOUNCE_MS = 1200
         if (shown !== null && shown.consumed !== true) {
           shown.consumed = true
           recordOutcome(shown.features, false)
+          ghost.noteIgnored()
         }
         stopTimer()
         ghost.cancel()
@@ -2746,6 +2830,8 @@ const COVERED_DEBOUNCE_MS = 1200
           if (shown !== null && shown.consumed !== true) {
             shown.consumed = true
             recordOutcome(shown.features, true)
+            // One accept is enough to earn rewrites back.
+            ghost.noteAccepted()
           }
           sendDock({ type: 'undismissed' })
           // Remember the draft the accept produced, so the safety net does not
@@ -3134,6 +3220,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const settings = React.useSyncExternalStore(config.subscribe, config.getSnapshot)
       const nextEnabled = settings.nextEnabled === true
       const composeEnabled = settings.composeEnabled === true
+      const suppressRewritesOn = settings.suppressRewrites !== false
 
       // One visual language: a quiet label on the left, the control on the right.
       const labelStyle = { color: 'var(--dsw-alias-label-secondary)', fontSize: '12px', lineHeight: '18px' }
@@ -3204,6 +3291,9 @@ const COVERED_DEBOUNCE_MS = 1200
         },
           h('option', { value: 'auto' }, t('settings.mode.auto')),
           h('option', { value: 'manual' }, t('settings.mode.manual')))),
+        row(t('settings.suppress'), h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+          switchButton(suppressRewritesOn, t('settings.suppress'), () => config.set({ suppressRewrites: !suppressRewritesOn }), 'settings-suppress'),
+          h('div', { style: hintStyle }, t('settings.suppress.hint')))),
         row(t('settings.language'), h('select', {
           'data-composer-quill': 'settings-language',
           'aria-label': t('settings.language'),
