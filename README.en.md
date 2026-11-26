@@ -92,8 +92,8 @@ Settings live in the browser's `localStorage`; nothing is sent anywhere.
 
 - **Local only**: completion requests use the model route configured in DSH. No third-party server, no reporting.
 - **Credentials masked**: before context leaves the machine, nine shapes become `[redacted …]` — private key blocks, AWS `AKIA…`, GitHub `ghp_` / `github_pat_`, OpenAI `sk-…`, Stripe, Slack `xox…`, JWTs, `Bearer …`.
-- **The draft is not masked**: on purpose. A suggestion is the draft plus a continuation, so masking would write `[redacted]` into the message you are about to send.
-- **Two local files**: diagnostics at `~/.dsh/composer-quill.log`, the usage ledger at `~/.dsh/composer-quill-usage.json` (counts and amounts only).
+- **The draft is masked too**: a secret-shaped string in the draft becomes `[redacted …]` as well, and a rewrite carrying that marker is discarded — this run gives no suggestion rather than sending the secret out.
+- **Three local files**: diagnostics at `~/.dsh/composer-quill.log`, the usage ledger at `~/.dsh/composer-quill-usage.json` (counts and amounts only), and the suggestion cache at `~/.dsh/composer-quill-cache.json` (suggestion text; delete it to clear). All three share one directory and follow `DSH_PROFILE_DIR` / `DSH_HOME`.
 - **Routes are authenticated**: the Host side requires this launch cycle's token or a same-origin browser request; the history route accepts the token only.
 
 ## How it works

@@ -3,7 +3,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 组件划分、请求生命周期、状态机、三层缓存、并发与节流、失败降级、关键不变量、安全与隐私、已知限制 |
-| [PROTOCOL.md](PROTOCOL.md) | 三条路由的请求/响应、SSE 帧规范与四种时序、状态码表、客户端约定、契约变更规则 |
+| [PROTOCOL.md](PROTOCOL.md) | 五条路由的请求/响应、SSE 帧规范与四种时序、状态码表、客户端约定、契约变更规则 |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 目录结构、安装与重启要求、三层测试怎么跑、日志与排障、发布清单、常见的坑 |
 
 面向使用者的说明（功能、快捷键、设置项）在仓库根目录的 [README.md](../README.md)。

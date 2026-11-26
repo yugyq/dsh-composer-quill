@@ -13,7 +13,7 @@ Only the prompt sent to your model provider, and only what that prompt contains:
 
 Before the prompt is sent, nine shapes are replaced with `[redacted …]`: PEM private keys, AWS `AKIA…`, GitHub `ghp_` / `github_pat_`, OpenAI `sk-…`, Stripe `sk_live_`, Slack `xox…`, JWTs, `Bearer …` tokens, and long base64 secrets.
 
-Your draft is deliberately **not** redacted. A suggestion is the draft plus a continuation, so masking would paste `[redacted]` into a message you are about to send.
+Your draft is redacted on the same rules. A rewrite that comes back carrying a `[redacted]` marker is discarded rather than offered, so a draft holding a secret produces no suggestion instead of leaking one.
 
 There is no telemetry, no analytics endpoint, no update check, and no third-party server. The only network calls are the ones made by DSH itself to your model provider.
 
@@ -29,15 +29,15 @@ Browser settings live in `localStorage` under `dsh.composer-quill.*`.
 
 ## HTTP routes
 
-Four routes are registered on the DSH web server. All of them require either this launch cycle's token or a same-origin browser request; `/composer-quill/history` and `/composer-quill/models` accept the token only.
+Five routes are registered on the DSH web server. All of them require either this launch cycle's token or a same-origin browser request; `/composer-quill/history` and `/composer-quill/models` accept the token only.
 
 | Route | Purpose |
 | --- | --- |
 | `POST /composer-quill/predict` | Suggestions |
 | `POST /composer-quill/history` | Your own past messages, for history completion |
 | `POST /composer-quill/beacon` | Diagnostics from the UI |
-| `GET/POST /composer-quill/usage` | Read or reset the usage ledger |
-| `GET/POST /composer-quill/models` | The provider and model list for the settings page |
+| `POST /composer-quill/usage` | Read or reset the usage ledger |
+| `POST /composer-quill/models` | The provider and model list for the settings page |
 
 ## Reporting
 

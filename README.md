@@ -92,8 +92,8 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill   # 或从仓�
 
 - **只在本机**：补全请求走 DSH 已配置的模型路由，没有第三方服务器，也不上报。
 - **遮蔽凭据**：上下文出机器前，九类形状会被换成 `[redacted …]`——私钥块、AWS `AKIA…`、GitHub `ghp_` / `github_pat_`、OpenAI `sk-…`、Stripe、Slack `xox…`、JWT、`Bearer …`。
-- **草稿不遮蔽**：刻意的——建议由「草稿 + 尾巴」拼成，遮蔽会把 `[redacted]` 写进你要发的消息。
-- **两个本地文件**：诊断日志 `~/.dsh/composer-quill.log`，用量账本 `~/.dsh/composer-quill-usage.json`（只有计数与金额）。
+- **草稿同样遮蔽**：草稿里若出现密钥形状，也会换成 `[redacted …]`；解析层会丢弃带遮蔽标记的改写，所以宁可这次不给建议，也不把密钥发出去。
+- **三个本地文件**：诊断日志 `~/.dsh/composer-quill.log`、用量账本 `~/.dsh/composer-quill-usage.json`（只有计数与金额）、建议缓存 `~/.dsh/composer-quill-cache.json`（存建议正文，删掉即清空）。三者都在同一个目录，跟着 `DSH_PROFILE_DIR` / `DSH_HOME` 走。
 - **接口有鉴权**：宿主侧要求本启动周期的令牌或同源浏览器请求；会话历史接口只认令牌。
 
 ## 它怎么工作
@@ -102,7 +102,7 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill   # 或从仓�
 - **两种回答**：接在草稿后面的尾巴，或 `REWRITE:` 加一整句。
 - **上下文**：只看最后两轮，更早的对话只作背景，且只留一条与草稿相关的旧行。
 - **缓存键**：绑定「草稿 + 对话版本 + 设置」，键不变就回放，键一变就作废，同一份草稿不会重复花钱。
-- **四个本地路由**：`/predict` 出建议，`/history` 取你的历史消息，`/beacon` 收诊断字段，`/usage` 读写用量账本。
+- **五条本地路由**：`/predict` 出建议，`/history` 取你的历史消息，`/beacon` 收诊断字段，`/usage` 读写用量账本，`/models` 给设置页列出可选模型。全部只接受 `POST`。
 - **排版**：建议层嵌在输入框内部，换行和裁切都交给宿主。
 
 细节见 [架构设计](docs/ARCHITECTURE.md) 与 [接口与流式协议](docs/PROTOCOL.md)。
