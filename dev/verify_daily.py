@@ -429,6 +429,29 @@ def main() -> int:
             f"切前={before_switch[:14]!r} 切后120ms={after_switch[:14]!r} store={str(store_a)[:60]}",
         )
 
+        # ---- S53 切会话掐掉在飞的补全请求（issue #7）
+        reset("")
+        h("clearSuggestions()")
+        h("setComposeTiming({first: 2500, step: 200})")
+        h("resetMetrics()")
+        h("setSession('s53-a')")
+        page.wait_for_timeout(200)
+        s53_draft = '帮我把这段报错查一下'
+        h(f"typeLive({s53_draft!r}, {{delay: 20}})")
+        page.wait_for_timeout(900)          # 请求在飞：首字 2500ms 还没到
+        sent_before = len([c for c in h("calls") if c.get("mode") == "compose"])
+        h("setSession('s53-b')")
+        page.wait_for_timeout(700)
+        aborted = h("aborts()")
+        after_calls = [c for c in h("calls") if c.get("mode") == "compose"][sent_before:]
+        stale = [c for c in after_calls if c.get("draft") == s53_draft]
+        record(
+            "S53 切会话掐掉在飞的补全请求",
+            sent_before >= 1 and aborted >= 1 and len(stale) == 0,
+            f"切前 compose={sent_before} 取消={aborted} 切后同草稿={len(stale)}",
+        )
+        h("setComposeTiming({first: 0, step: 220})")
+
         # ---- S49 宿主说空、编辑器里还有字时不许画 box 灰字（issue #5 的第 2 条）
         reset("")
         h("clearSuggestions()")
@@ -1341,7 +1364,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 63
+EXPECTED_SCENARIOS = 64
 
 
 if __name__ == "__main__":
