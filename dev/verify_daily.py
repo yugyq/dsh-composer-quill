@@ -334,6 +334,50 @@ def main() -> int:
             f"旧尾巴={base4_tail[:10]!r} 变化帧={len(pairs4)} 条 不一致={len(disagree4)} 条"
             + (f" 例={disagree4[0][0]!r} vs {disagree4[0][1]!r}" if disagree4 else ""),
         )
+        # ---- S54 按键和 Tab 落在同一拍时，采纳仍然补完这句话（issue #8）
+        # 灰字是上一拍算出来的，编辑器可能已经多了一个字而宿主还没重渲染。旧规则在这种
+        # 情况下返回空、什么也不插。用建议本身重新对齐，插进去的只会比灰字更短，所以
+        # 屏幕上永远不会出现用户没读到过的字。
+        h("setComposeMode('echo')")
+        h("setComposeTiming({first: 0, step: 20})")
+        reset("")
+        base5 = "把重试的间隔也写进去"
+        h(f"typeLive({json.dumps(base5)}, {{delay: 40}})")
+        page.wait_for_timeout(1200)
+        base5_tail = (h("snapshot()")["text"] or {}).get("text", "")
+        h("setComposeTiming({first: 2500, step: 120})")
+        ahead5 = base5 + base5_tail[:1]
+        # DOM 里打字和按 Tab 之间不插渲染：React 来不及把 current 换成新草稿。
+        typed5 = h(f"typeAheadAccept({json.dumps(ahead5)})")
+        page.wait_for_timeout(200)
+        accepted5 = h("draft()")
+        wanted5 = base5 + base5_tail
+        record(
+            "S54 同一拍里按键再采纳，补完这句话",
+            bool(base5_tail) and typed5 == ahead5 and accepted5 == wanted5,
+            f"灰字={base5_tail[:12]!r} 按键后={typed5!r} 采纳后={accepted5!r} 期望={wanted5!r}",
+        )
+        # ---- S54b 编辑器被别处改过、宿主还不知道时，Tab 用建议本身对齐（issue #8）
+        # 「DOM 变了但 React 还没收到」这种状态在本应用里只有一个来源：外部改动或组字。
+        # 这时按旧尾巴裁剪会得到空串（什么也不插），用建议本身重算能补完这句话，而且
+        # 插进去的仍然是灰字里已经出现过的那截。
+        h("setComposeTiming({first: 0, step: 20})")
+        reset("")
+        base6 = "把失败率也一起统计"
+        h(f"typeLive({json.dumps(base6)}, {{delay: 40}})")
+        page.wait_for_timeout(1200)
+        base6_tail = (h("snapshot()")["text"] or {}).get("text", "")
+        h("setComposeTiming({first: 2500, step: 120})")
+        ahead6 = base6 + base6_tail[:1]
+        h(f"typeSilentAccept({json.dumps(ahead6)})")   # 没有 input 事件：宿主状态停在旧草稿
+        page.wait_for_timeout(200)
+        accepted6 = h("draft()")
+        wanted6 = base6 + base6_tail
+        record(
+            "S54b 宿主不知道编辑器改了字时，采纳照样补完这句话",
+            bool(base6_tail) and accepted6 == wanted6,
+            f"灰字={base6_tail[:12]!r} 采纳后={accepted6!r} 期望={wanted6!r}",
+        )
         h("setComposeMode('ok')")
         h("setComposeTiming({first: 0, step: 220})")
 
@@ -1364,7 +1408,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 64
+EXPECTED_SCENARIOS = 66
 
 
 if __name__ == "__main__":

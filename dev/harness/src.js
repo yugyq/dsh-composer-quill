@@ -338,6 +338,21 @@ async function main() {
   window.__harness = {
     type,
     typeAhead,
+    /** Put text in the DOM without telling the host, then press Tab. */
+    typeSilentAccept(text) {
+      editor.textContent = text
+      caretToEnd()
+      editor.focus()
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+      return editor.textContent ?? ''
+    },
+    /** Put text in the DOM and press Tab in the same tick: no host render in between. */
+    typeAheadAccept(text) {
+      const out = typeAhead(text)
+      editor.focus()
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+      return out
+    },
     render,
     typeLive,
     key,
