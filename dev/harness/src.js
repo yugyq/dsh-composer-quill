@@ -400,6 +400,50 @@ async function main() {
         delta: charRect ? Math.round((ghostRect.y - (charRect.y - leading)) * 10) / 10 : null,
       }
     },
+    /** What the row says and what the ghost shows, read in the same instant. */
+    readGhostChip() {
+      const ghost = document.querySelector('[data-composer-quill="text"]')
+      const chip = document.querySelector('[data-composer-quill="dock-suggestion"]')
+      return {
+        draft: editor.textContent ?? '',
+        ghost: ghost && getComputedStyle(ghost).display !== 'none' ? ghost.textContent ?? '' : '',
+        chip: chip ? chip.textContent ?? '' : '',
+      }
+    },
+    /**
+     * Type ahead and watch what the row and the ghost say during every DOM change
+     * the keystroke causes. Read at each mutation, not on a timer: the disagreement
+     * only exists until the next paint, so a sampler usually misses it.
+     */
+    /**
+     * Type ahead and read what the row and the ghost say at each frame boundary —
+     * the moment before the browser paints. A mutation-level read is too early to
+     * matter (both settle inside one task); a timer read is too late (it misses
+     * the frame that showed the disagreement). The first callback is registered
+     * before the keystroke so it runs before any repaint the keystroke schedules.
+     */
+    async typeAheadWatched(text) {
+      const read = () => {
+        const ghost = document.querySelector('[data-composer-quill="text"]')
+        const chip = document.querySelector('[data-composer-quill="dock-suggestion"]')
+        return {
+          ghost: ghost && getComputedStyle(ghost).display !== 'none' ? ghost.textContent ?? '' : '',
+          chip: chip ? chip.textContent ?? '' : '',
+        }
+      }
+      const frames = []
+      // Registered before the keystroke, so it runs before any repaint the
+      // keystroke schedules in this frame: that frame is what the user sees.
+      let next = new Promise((resolve) => requestAnimationFrame(() => { frames.push(read()); resolve() }))
+      this.typeAhead(text)
+      const atTask = read()
+      for (let i = 0; i < 5; i += 1) {
+        await next
+        next = new Promise((resolve) => requestAnimationFrame(() => { frames.push(read()); resolve() }))
+      }
+      await next
+      return { atTask, frames }
+    },
     ghostNow() {
       const text = document.querySelector('[data-composer-quill="text"]')
       return text ? { text: text.textContent, display: getComputedStyle(text).display } : null

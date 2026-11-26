@@ -2030,6 +2030,9 @@ const COVERED_DEBOUNCE_MS = 1200
           })
         }
       }
+      // A keystroke has to reach the screen in the same task that changes the row,
+      // or the row and the ghost disagree for a frame about which tail they describe.
+      paintData.paintNow = paint
       paint()
     const onFocusChange = () => {
       if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(paint)
@@ -2072,6 +2075,7 @@ const COVERED_DEBOUNCE_MS = 1200
         document.removeEventListener('focusin', onFocusChange, true)
         document.removeEventListener('focusout', onFocusChange, true)
         if (frame !== null) window.cancelAnimationFrame(frame)
+        if (paintData.paintNow === paint) paintData.paintNow = null
       }
     }, [visible, ghost, ghostLayer, sessionId])
     }
@@ -2793,11 +2797,35 @@ const COVERED_DEBOUNCE_MS = 1200
       const liveText = (() => {
         try {
           const node = editorEl()
-          return node === null || node === undefined ? draftBase : String(node.textContent ?? '')
+          if (node === null || node === undefined) return draftBase
+          return typeof node.value === 'string' ? node.value : String(node.textContent ?? '')
         } catch {
           return draftBase
         }
       })()
+      // The ghost trims at paint time, the row can only trim at render time, and the
+      // draft this render was handed can still be a keystroke behind the editor. A
+      // keystroke therefore has to re-render the row itself, or the two disagree for
+      // as long as the prop takes to arrive.
+      const seenEditor = React.useRef(liveText)
+      const [, bumpEditorText] = React.useReducer((n) => n + 1, 0)
+      React.useEffect(() => {
+        seenEditor.current = liveText
+      }, [liveText])
+      React.useEffect(() => {
+        const node = editorEl()
+        if (node === null || node === undefined) return undefined
+        const onInput = () => {
+          const now = typeof node.value === 'string' ? node.value : String(node.textContent ?? '')
+          if (now === seenEditor.current) return
+          // Same task as the keystroke: repaint the ghost now, then let the row
+          // re-render behind it, so the two never describe different tails.
+          paintData.paintNow?.()
+          bumpEditorText()
+        }
+        node.addEventListener('input', onInput)
+        return () => node.removeEventListener('input', onInput)
+      }, [])
       // Trim against what is actually in the editor, not against the draft state
       // that this render was handed. Between a keystroke and the state that
       // follows it the two disagree for a frame, and trimming against the older

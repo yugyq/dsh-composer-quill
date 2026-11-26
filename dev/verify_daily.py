@@ -304,6 +304,36 @@ def main() -> int:
             bool(base3_tail) and accepted == wanted,
             f"旧尾巴={base3_tail[:12]!r} 采纳后={accepted!r} 期望={wanted!r}",
         )
+        # ---- S51d 工具条文案和灰字必须是同一截
+        # 灰字在绘制时裁剪，工具条只能在渲染时裁剪。按键之后宿主状态可能还慢一拍，
+        # 那一拍里两边会指向不同的尾巴；所以按键本身要能把这一行重新渲染出来。
+        h("setComposeMode('echo')")
+        h("setComposeTiming({first: 0, step: 20})")
+        reset("")
+        base4 = "把调用链也画出来"
+        h(f"typeLive({json.dumps(base4)}, {{delay: 40}})")
+        page.wait_for_timeout(1200)
+        base4_tail = (h("snapshot()")["text"] or {}).get("text", "")
+        h("setComposeTiming({first: 2500, step: 120})")
+        ahead4 = base4 + base4_tail[:1]
+        # 每次 DOM 变化都读一次：不一致只活到下一帧，定时采样会漏掉它（试过，漏）。
+        # 工具条是「<提示>：<尾巴>」，按第一个全角冒号切出尾巴再和灰字比。
+        def chip_tail_of(text):
+            return text.split("：", 1)[1].strip() if "：" in text else text.strip()
+
+        seen4 = h(f"typeAheadWatched({json.dumps(ahead4)})")
+        pairs4 = [
+            (chip_tail_of(s["chip"]), s["ghost"])
+            for s in seen4["frames"]
+            if s["ghost"] and chip_tail_of(s["chip"])
+        ]
+        disagree4 = [p for p in pairs4 if p[0] != p[1]]
+        record(
+            "S51d 工具条文案与灰字同一截",
+            bool(base4_tail) and bool(pairs4) and not disagree4,
+            f"旧尾巴={base4_tail[:10]!r} 变化帧={len(pairs4)} 条 不一致={len(disagree4)} 条"
+            + (f" 例={disagree4[0][0]!r} vs {disagree4[0][1]!r}" if disagree4 else ""),
+        )
         h("setComposeMode('ok')")
         h("setComposeTiming({first: 0, step: 220})")
 
@@ -1304,7 +1334,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 62
+EXPECTED_SCENARIOS = 63
 
 
 if __name__ == "__main__":
