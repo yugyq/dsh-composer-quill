@@ -12,11 +12,9 @@ window.__harnessAborts = 0
 
 window.fetch = async (url, init) => {
   const body = init && init.body ? JSON.parse(init.body) : {}
-  // A cancelled request is exactly what the tuning is about, so count aborts.
-  if (init && init.signal && String(url).includes('compose')) {
-    if (init.signal.aborted) window.__harnessAborts += 1
-    else init.signal.addEventListener('abort', () => { window.__harnessAborts += 1 }, { once: true })
-  }
+  // A cancelled request is exactly what the tuning is about. The client cancels by
+  // dropping the response body, so the count lives on the stream (see `cancel()`);
+  // an aborted signal is counted at the same place, once.
   calls.push({ url: String(url), model: body.model ?? null, reasoning: body.reasoning ?? null, mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : String(url).includes('history') ? 'history' : 'next'), draft: body.draft ?? '', event: body.event ?? '', detail: body.detail ?? '', sessionId: body.sessionId ?? '' })
   if (String(url).includes('/composer-quill/usage')) {
     const zero = { calls: 0, void: 0, input: 0, output: 0, cacheRead: 0, costMicro: 0, uncosted: 0 }
@@ -94,7 +92,19 @@ window.fetch = async (url, init) => {
       pieces.push(frame('final', { text: isRewrite ? body3 : body3 }))
       pieces.push(frame('done', { mode: isRewrite ? 'full' : 'append' }))
     }
+    let counted = false
+    const bumpAbort = () => {
+      if (counted) return
+      counted = true
+      window.__harnessAborts += 1
+    }
+    if (init && init.signal) {
+      if (init.signal.aborted) bumpAbort()
+      else init.signal.addEventListener('abort', bumpAbort, { once: true })
+    }
     const stream = new ReadableStream({
+      // The client stopped reading before the last frame: that is a cancelled call.
+      cancel: bumpAbort,
       async start(controller) {
         // The first frame is the long wait in a real call; the rest are cheap.
         await new Promise((resolve) => setTimeout(resolve, composeTiming.first))

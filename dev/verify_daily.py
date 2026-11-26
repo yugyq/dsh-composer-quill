@@ -115,7 +115,7 @@ def main() -> int:
         stuck = longest_run(samples, lambda s: s["pending"])
         tail = samples[-10:]
         responded = any(s["proposal"] or s["ghost"] for s in tail)
-        record("S2 快速连打不卡在补写中", stuck <= 4000, f"最长 pending={stuck}ms samples={len(samples)}")
+        record("S2 快速连打不卡在补写中", len(samples) >= 10 and stuck <= 4000, f"最长 pending={stuck}ms samples={len(samples)}")
         record("S2 停顿后 2.5s 内有反馈", responded, f"末尾状态={tail[-1]['proposal'][:24]!r}")
 
         # ---- S3 中途改主意：旧建议不得覆盖新输入
@@ -648,6 +648,8 @@ def main() -> int:
         allowed = int(typing_s / 1.5) + 2
         record(
             "S23 快速连打期间取消失控",
+            # Before the first delta a superseded request is allowed to finish and
+            # be dropped, so zero is a legitimate reading. The bound is the guard.
             aborts_during_typing <= allowed,
             f"{aborts_during_typing} 次取消 / {typing_s:.1f}s（上限 {allowed}）",
         )
@@ -927,7 +929,7 @@ def main() -> int:
             "S32 灰字上报不再逐帧",
             # 一次流式补写有 40+ 个增量；4 次、5 次、6 次都说明「不是逐帧」。
             # 上限放到 8，逐帧回归（会到几十次）仍然会被抓住。
-            len(beacons) <= 8 and not with_text and len(with_length) == len(beacons),
+            1 <= len(beacons) <= 8 and not with_text and len(with_length) == len(beacons),
             f"paint 上报 {len(beacons)} 次，带原文 {len(with_text)} 次，带长度 {len(with_length)} 次",
         )
         h("setComposeMode('ok')")
@@ -983,7 +985,9 @@ def main() -> int:
         )
         record(
             "S34 播报不逐帧",
-            len(changes["distinct"]) <= 3 and changes["final"] != "",
+            1 <= len(changes["distinct"]) <= 3
+            and changes["final"].startswith("建议：")
+            and len(changes["final"]) > len("建议："),
             f"播报变化 {len(changes['distinct'])} 次，最终={changes['final'][:40]!r}",
         )
         h("setComposeMode('ok')")
@@ -1055,12 +1059,13 @@ def main() -> int:
         # 切会话后立刻清空输入框：之后再出现同草稿的 compose 调用，就只能是那次重试
         h("setSession('s-other')")
         h("type('')")
-        page.wait_for_timeout(2200)
+        # The next retry is ~4 s out: wait past it, or the check can only pass.
+        page.wait_for_timeout(4500)
         after = [c for c in h("calls") if c.get("mode") == "compose"][before_switch:]
         stale = [c for c in after if c.get("draft") == "这段日志重新整理一下再发我"]
         record(
             "S37 失败重试不能活过会话切换",
-            len(stale) == 0,
+            armed.get("phase") == "error" and before_switch >= 1 and len(stale) == 0,
             f"切换前 phase={armed.get('phase')}；切换后同草稿的 compose 调用={len(stale)}（期望 0）",
         )
         h("setComposeMode('ok')")
@@ -1259,13 +1264,14 @@ def main() -> int:
         h("showSettings()")
         page.wait_for_timeout(600)
         model_select = page.locator('[data-composer-quill="settings-model"]')
+        selects = model_select.count()
+        options = model_select.locator("option").all_inner_texts() if selects == 1 else []
         record(
             "S46 设置里有模型选择器",
-            model_select.count() > 0,
-            f"个数={model_select.count()}",
+            selects == 1 and len(options) >= 2,
+            f"选择器={selects} 选项={options}",
         )
-        if model_select.count() > 0:
-            options = model_select.locator("option").all_inner_texts()
+        if selects == 1 and len(options) >= 2:
             model_select.select_option("deepseek::v4-flash")
             page.wait_for_timeout(300)
             stored = page.evaluate(
@@ -1292,9 +1298,10 @@ def main() -> int:
 
         # ---- S47 思考强度：选项可读，选完后请求带上档位
         thinking = page.locator('[data-composer-quill="settings-reasoning"]')
-        record("S47 设置里有思考强度", thinking.count() > 0, f"个数={thinking.count()}")
-        if thinking.count() > 0:
-            labels = thinking.locator("option").all_inner_texts()
+        thinking_selects = thinking.count()
+        labels = thinking.locator("option").all_inner_texts() if thinking_selects == 1 else []
+        record("S47 设置里有思考强度", thinking_selects == 1 and len(labels) >= 2, f"选择器={thinking_selects} 选项={labels}")
+        if thinking_selects == 1 and len(labels) >= 2:
             thinking.select_option("high")
             page.wait_for_timeout(300)
             stored_reasoning = page.evaluate(
