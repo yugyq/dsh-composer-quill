@@ -41,3 +41,9 @@ __pycache__/
 dev/flake-ledger.json
 # 提示词 A/B 的运行产物：每次覆盖，不进仓库
 dev/ab-prompt-last.json
+
+# 临时脚本与提交说明（我的工作痕迹，不属于项目）
+_*.mjs
+_*.txt
+_*.py
+_*.md
