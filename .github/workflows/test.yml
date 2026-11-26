@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Callable from publish.yml, so a tag cannot ship a commit whose scenarios fail.
+  workflow_call:
 
 jobs:
   unit:
