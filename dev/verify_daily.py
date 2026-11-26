@@ -173,6 +173,49 @@ def main() -> int:
         ghost = snap["text"]["text"] if snap["text"] else ""
         record("S5 Esc 后同草稿不再重弹", chip == "" and ghost == "", f"chip={chip!r} ghost={ghost!r}")
 
+        # ---- S50 连续忽略三次：整段改写暂停，尾巴照常，采纳一次恢复
+        # S5 already spent one ignore in this page's store, so start from a clean one.
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+
+        def ignore_one(draft):
+            reset("")
+            h(f"typeLive({draft!r}, {{delay: 40}})")
+            page.wait_for_timeout(1700)
+            first = proposal_of(h("snapshot()"))
+            h("press({key: 'Escape'})")
+            page.wait_for_timeout(200)
+            return first
+
+        first = ignore_one('这段曰志报错了')
+        second = ignore_one('这段曰志报错了两处')
+        third = ignore_one('这段曰志报错了两处还')
+        # The fourth rewrite is requested but must not be painted.
+        reset("")
+        calls_before = compose_calls()
+        h("typeLive('这段曰志报错了两处还有堆栈', {delay: 40})")
+        page.wait_for_timeout(1900)
+        suppressed = proposal_of(h("snapshot()"))
+        asked = compose_calls() - calls_before
+        # A tail is not a rewrite: it still arrives.
+        reset("")
+        h("typeLive('这段日志里有个 409', {delay: 40})")
+        page.wait_for_timeout(1700)
+        tail = proposal_of(h("snapshot()"))
+        record(
+            "S50 忽略三次后不再画改写、尾巴照常",
+            all("采用改写" in c for c in (first, second, third)) and asked >= 1 and suppressed == "" and "按 Tab" in tail,
+            f"三次改写={['采用改写' in first, '采用改写' in second, '采用改写' in third]} 第四次请求={asked} 压制后={suppressed!r} 尾巴={tail[:20]!r}",
+        )
+        # One acceptance earns rewrites back.
+        h("accept()")
+        page.wait_for_timeout(300)
+        reset("")
+        h("typeLive('这段曰志报错了两处还有别', {delay: 40})")
+        page.wait_for_timeout(1900)
+        restored = proposal_of(h("snapshot()"))
+        record("S50b 采纳一次后改写恢复", "采用改写" in restored, f"chip={restored[:24]!r}")
+
         # ---- S6 请求失败一次：自动重试并恢复
         h("setComposeMode('fail-once')")
         reset("")
@@ -1170,7 +1213,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 57
+EXPECTED_SCENARIOS = 59
 
 
 if __name__ == "__main__":

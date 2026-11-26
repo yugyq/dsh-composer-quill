@@ -1,0 +1,61 @@
+{"i":0,"chars":"1","draft":"好","ms":982,"error":null,"trace":"start,final,done","painted":true,"text":"好，按你说的多跑几轮，样本攒到几十条再对比分布。","reason":null}
+{"i":1,"chars":"3","draft":"帮我改","ms":993,"error":null,"trace":"start,final,done","painted":true,"text":"帮我改帮我改解析器：模型有思考内容时就别丢弃草稿","reason":null}
+{"i":2,"chars":"6","draft":"帮我看下这段","ms":3490,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"帮我看下这段日志，看看 modelMs 和 qu","reason":null}
+{"i":3,"chars":"20","draft":"帮我把这段日志按时间顺序整理","ms":1816,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"帮我把这段日志按时间顺序整理一下，按 Z 时间从","reason":null}
+{"i":4,"chars":"1","draft":"嗯","ms":751,"error":null,"trace":"start,final,done","painted":true,"text":"嗯继续攒到几十条再给我分布。","reason":null}
+{"i":5,"chars":"3","draft":"先看这","ms":954,"error":null,"trace":"start,final,done","painted":true,"text":"先看这先看这批样本分布。","reason":null}
+{"i":6,"chars":"6","draft":"这条用例为什","ms":1307,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"这条用例为什么是 cancelled、58ms ","reason":null}
+{"i":7,"chars":"20","draft":"这条用例在 CI 上一直挂麻烦你","ms":3117,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"This test case keeps fai","reason":null}
+{"i":8,"chars":"1","draft":"行","ms":493,"error":null,"trace":"start,final,done","painted":true,"text":"行，多跑几轮攒样本。","reason":null}
+{"i":9,"chars":"3","draft":"我觉这","ms":1213,"error":null,"trace":"start,final,done","painted":true,"text":"我觉这得先把样本攒够。","reason":null}
+{"i":10,"chars":"6","draft":"把日志按时间","ms":1046,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"把日志按时间排序，攒到几十条后再给我 `mode","reason":null}
+{"i":11,"chars":"20","draft":"先看下 auth.test.ts 那条为什么会","ms":3512,"error":null,"trace":"start,delta,delta,delta,delta,delta,final,done","painted":true,"text":"先看下 auth.test.ts 那条为什么会偶","reason":null}
+{"i":12,"chars":"1","draft":"对","ms":1298,"error":null,"trace":"start,final,done","painted":true,"text":"对，先就这样。","reason":null}
+{"i":13,"chars":"3","draft":"这段日","ms":1089,"error":null,"trace":"start,final,done","painted":true,"text":"这段日志先保留着。","reason":null}
+{"i":14,"chars":"6","draft":"帮我看下这段","ms":4719,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"帮我看下这段 log — mainly the ","reason":null}
+{"i":15,"chars":"20","draft":"帮我把这段日志按时间顺序整理","ms":2101,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"帮我把这段日志按时间顺序整理成一张表，把 que","reason":null}
+{"i":16,"chars":"1","draft":"是","ms":1045,"error":null,"trace":"start,final,done","painted":true,"text":"是否可以按思考字数而不是字数来判定重试？","reason":null}
+{"i":17,"chars":"3","draft":"帮我改","ms":639,"error":null,"trace":"start,final,done","painted":true,"text":"帮我改一下解析器，保留 stop 的文本。","reason":null}
+{"i":18,"chars":"6","draft":"这条用例为什","ms":2095,"error":null,"trace":"start,delta,delta,delta,final,done","painted":true,"text":"这条用例为什么算 silent 而不是 late","reason":null}
+{"i":19,"chars":"20","draft":"这条用例在 CI 上一直挂麻烦你","ms":1571,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"这条用例在 CI 上一直挂，麻烦你帮忙看一下是不","reason":null}
+{"i":20,"chars":"1","draft":"没","ms":457,"error":null,"trace":"start,final,done","painted":true,"text":"没让解析器别丢这 3 条 silent 样本。","reason":null}
+{"i":21,"chars":"3","draft":"先看这","ms":795,"error":null,"trace":"start,final,done","painted":true,"text":"先看这不，先看这 4 条记录，再补样本。","reason":null}
+{"i":22,"chars":"6","draft":"把日志按时间","ms":2003,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"把日志按时间排序，再按 queueMs、mode","reason":null}
+{"i":23,"chars":"20","draft":"先看下 auth.test.ts 那条为什么会","ms":1830,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"先看下 auth.test.ts 那条为什么会先","reason":null}
+{"i":24,"chars":"1","draft":"改","ms":848,"error":null,"trace":"start,final,done","painted":true,"text":"改回适配层。","reason":null}
+{"i":25,"chars":"3","draft":"我觉这","ms":612,"error":null,"trace":"start,final,done","painted":true,"text":"我觉这得先修解析器。","reason":null}
+{"i":26,"chars":"6","draft":"帮我看下这段","ms":2578,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"帮我看下这段的 queueMs / modelM","reason":null}
+{"i":27,"chars":"20","draft":"帮我把这段日志按时间顺序整理","ms":1282,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"帮我把这段日志按时间顺序整理一下，并标出每条各自","reason":null}
+{"i":28,"chars":"1","draft":"看","ms":626,"error":null,"trace":"start,final,done","painted":true,"text":"看那三条 silent 的 modelMs 分布","reason":null}
+{"i":29,"chars":"3","draft":"这段日","ms":862,"error":null,"trace":"start,final,done","painted":true,"text":"这段日志先发给我看看。","reason":null}
+{"i":30,"chars":"6","draft":"这条用例为什","ms":2068,"error":null,"trace":"start,delta,final,done","painted":true,"text":"这条用例为什么没进这次的对比样本？","reason":null}
+{"i":31,"chars":"20","draft":"这条用例在 CI 上一直挂麻烦你","ms":5592,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"This test case keeps fai","reason":null}
+{"i":32,"chars":"1","draft":"好","ms":742,"error":null,"trace":"start,final,done","painted":true,"text":"好继续攒样本。","reason":null}
+{"i":33,"chars":"3","draft":"帮我改","ms":819,"error":null,"trace":"start,final,done","painted":true,"text":"帮我改一下解析器，先别再丢这三条。","reason":null}
+{"i":34,"chars":"6","draft":"把日志按时间","ms":1754,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"把日志按时间排序，把 modelMs 和 que","reason":null}
+{"i":35,"chars":"20","draft":"先看下 auth.test.ts 那条为什么会","ms":5479,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"First let me check why t","reason":null}
+{"i":36,"chars":"1","draft":"嗯","ms":1272,"error":null,"trace":"start,final,done","painted":true,"text":"嗯，那就先看看模型思考。","reason":null}
+{"i":37,"chars":"3","draft":"先看这","ms":1186,"error":null,"trace":"start,final,done","painted":true,"text":"先看这那三条 silent 的模型耗时。","reason":null}
+{"i":38,"chars":"6","draft":"帮我看下这段","ms":4192,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"帮我看下这段采样脚本，看它是不是每轮都写入记录，","reason":null}
+{"i":39,"chars":"20","draft":"帮我把这段日志按时间顺序整理","ms":4965,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"Please sort this log in ","reason":null}
+{"i":40,"chars":"1","draft":"行","ms":748,"error":null,"trace":"start,final,done","painted":true,"text":"行，那就按模型思考这条继续查。","reason":null}
+{"i":41,"chars":"3","draft":"我觉这","ms":1138,"error":null,"trace":"start,final,done","painted":true,"text":"我觉这得先扩到几十条再看分布。","reason":null}
+{"i":42,"chars":"6","draft":"这条用例为什","ms":6775,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"Why doesn't this test ca","reason":null}
+{"i":43,"chars":"20","draft":"这条用例在 CI 上一直挂麻烦你","ms":2736,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"这条用例在 CI 上一直挂，麻烦你看一下。","reason":null}
+{"i":44,"chars":"1","draft":"对","ms":1132,"error":null,"trace":"start,final,done","painted":true,"text":"对，把几十条样本跑完。","reason":null}
+{"i":45,"chars":"3","draft":"这段日","ms":491,"error":null,"trace":"start,final,done","painted":true,"text":"这段日志先留着。","reason":null}
+{"i":46,"chars":"6","draft":"把日志按时间","ms":2167,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"把日志按时间排序，跑够几十条后把新的 model","reason":null}
+{"i":47,"chars":"20","draft":"先看下 auth.test.ts 那条为什么会","ms":2646,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"先看下 auth.test.ts 那条为什么会超","reason":null}
+{"i":48,"chars":"1","draft":"是","ms":1184,"error":null,"trace":"start,final,done","painted":true,"text":"是是，继续攒到几十条再看分布。","reason":null}
+{"i":49,"chars":"3","draft":"帮我改","ms":437,"error":null,"trace":"start,final,done","painted":true,"text":"帮我改那三条 silent 的解析器逻辑。","reason":null}
+{"i":50,"chars":"6","draft":"帮我看下这段","ms":2843,"error":null,"trace":"start,delta,delta,delta,delta,final,done","painted":true,"text":"帮我看下这段日志里的 modelMs 拆分对不对","reason":null}
+{"i":51,"chars":"20","draft":"帮我把这段日志按时间顺序整理","ms":1782,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"帮我把这段日志按时间顺序整理一下，做成一张按时间","reason":null}
+{"i":52,"chars":"1","draft":"没","ms":726,"error":null,"trace":"start,final,done","painted":true,"text":"没先查一下模型侧超时配置。","reason":null}
+{"i":53,"chars":"3","draft":"先看这","ms":684,"error":null,"trace":"start,final,done","painted":true,"text":"先看这先看这四条样本的思考字数。","reason":null}
+{"i":54,"chars":"6","draft":"这条用例为什","ms":8505,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"这条用例为什么没被算进 modelMs 的分布里","reason":null}
+{"i":55,"chars":"20","draft":"这条用例在 CI 上一直挂麻烦你","ms":1576,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"这条用例在 CI 上一直挂，麻烦你排查一下。","reason":null}
+{"i":56,"chars":"1","draft":"改","ms":911,"error":null,"trace":"start,final,done","painted":true,"text":"改 Rewrite the parser to ","reason":null}
+{"i":57,"chars":"3","draft":"我觉这","ms":819,"error":null,"trace":"start,final,done","painted":true,"text":"我觉这这个结论说明问题。","reason":null}
+{"i":58,"chars":"6","draft":"把日志按时间","ms":2123,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"把日志按时间排序导出成 CSV，攒够几十条样本后","reason":null}
+{"i":59,"chars":"20","draft":"先看下 auth.test.ts 那条为什么会","ms":2488,"error":null,"trace":"start,delta,delta,delta,delta,delta,delta,delta,retract,delta,delta,delta,delta,delta,delta,delta,delta,delta,delta,final,done","painted":true,"text":"先看下 auth.test.ts 那条为什么会只","reason":null}
+done 60

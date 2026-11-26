@@ -1,0 +1,278 @@
+[
+  {
+    "draft": "这条用例在 CI 上一直挂",
+    "off": {
+      "ms": 1026,
+      "raw": "，本地却跑得通，是不是环境差异的问题？",
+      "chars": 19,
+      "thinking": 0,
+      "out": 12,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "这条用例在 CI 上一直挂，本地却跑得通，是不是环境差异的问题？"
+    },
+    "high": {
+      "ms": 3127,
+      "raw": "，想确认下是不是还是环境依赖的问题。",
+      "chars": 18,
+      "thinking": 298,
+      "out": 309,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "这条用例在 CI 上一直挂，想确认下是不是还是环境依赖的问题。"
+    }
+  },
+  {
+    "draft": "把刚才那个脚本改成并发",
+    "off": {
+      "ms": 344,
+      "raw": "REWRITE: 把刚才那个脚本改成并发执行，测一下会不会还挂在 CI 上",
+      "chars": 37,
+      "thinking": 0,
+      "out": 21,
+      "finish": "stop",
+      "kind": "full",
+      "tail": "把刚才那个脚本改成并发执行，测一下会不会还挂在 CI 上"
+    },
+    "high": {
+      "ms": 1936,
+      "raw": "，再跑一遍 CI 看还会不会挂",
+      "chars": 15,
+      "thinking": 158,
+      "out": 169,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "把刚才那个脚本改成并发，再跑一遍 CI 看还会不会挂。"
+    }
+  },
+  {
+    "draft": "我看下日志里有没有",
+    "off": {
+      "ms": 895,
+      "raw": "安装依赖那一步的报错",
+      "chars": 10,
+      "thinking": 0,
+      "out": 7,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "我看下日志里有没有安装依赖那一步的报错。"
+    },
+    "high": {
+      "ms": 1760,
+      "raw": "其他失败的步骤",
+      "chars": 7,
+      "thinking": 137,
+      "out": 141,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "我看下日志里有没有其他失败的步骤。"
+    }
+  },
+  {
+    "draft": "先别发版，等测试",
+    "off": {
+      "ms": 255,
+      "raw": "结果出来再说。",
+      "chars": 7,
+      "thinking": 0,
+      "out": 4,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "先别发版，等测试结果出来再说。"
+    },
+    "high": {
+      "ms": 1926,
+      "raw": "把 dev/harness 那个 CI job 跑通了再说。",
+      "chars": 30,
+      "thinking": 121,
+      "out": 136,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "先别发版，等测试把 dev/harness 那个 CI job 跑通了再说。"
+    }
+  },
+  {
+    "draft": "这个接口的返回里有三个字段需要",
+    "off": {
+      "ms": 1185,
+      "raw": "注意带上 requestId。",
+      "chars": 15,
+      "thinking": 0,
+      "out": 5,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "这个接口的返回里有三个字段需要注意带上 requestId。"
+    },
+    "high": {
+      "ms": 2200,
+      "raw": "跟日志里实际打印的字段核对一下，缺哪个就能定位了",
+      "chars": 24,
+      "thinking": 203,
+      "out": 219,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "这个接口的返回里有三个字段需要跟日志里实际打印的字段核对一下，缺哪个就能定位了。"
+    }
+  },
+  {
+    "draft": "能不能把 cacheKey 里的 epoch 去掉试试",
+    "off": {
+      "ms": 929,
+      "raw": "改成按环境区分，别让它每次构建都变",
+      "chars": 17,
+      "thinking": 0,
+      "out": 11,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "能不能把 cacheKey 里的 epoch 去掉试试改成按环境区分，别让它每次构建都变。"
+    },
+    "high": {
+      "ms": 1391,
+      "raw": "，不行再回滚，我先在本地跑一遍对比",
+      "chars": 17,
+      "thinking": 77,
+      "out": 90,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "能不能把 cacheKey 里的 epoch 去掉试试，不行再回滚，我先在本地跑一遍对比。"
+    }
+  },
+  {
+    "draft": "麻烦你确认一下昨天说的那个",
+    "off": {
+      "ms": 671,
+      "raw": "",
+      "chars": 0,
+      "thinking": 0,
+      "out": 0,
+      "finish": "stop",
+      "kind": "reject",
+      "tail": ""
+    },
+    "high": {
+      "ms": 1604,
+      "raw": "场景 job 现在在 CI 上还挂不挂，dev/harness 的依赖是不是都装上了？",
+      "chars": 43,
+      "thinking": 206,
+      "out": 232,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "麻烦你确认一下昨天说的那个场景 job 现在在 CI 上还挂不挂，dev/harness 的依赖是不是都装上了？"
+    }
+  },
+  {
+    "draft": "如果超时就把强度降到",
+    "off": {
+      "ms": 961,
+      "raw": "低一档再跑一次",
+      "chars": 7,
+      "thinking": 0,
+      "out": 6,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "如果超时就把强度降到低一档再跑一次。"
+    },
+    "high": {
+      "ms": 1389,
+      "raw": "低一档，先别动其他配置",
+      "chars": 11,
+      "thinking": 73,
+      "out": 83,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "如果超时就把强度降到低一档，先别动其他配置。"
+    }
+  },
+  {
+    "draft": "我怀疑是 preflight 拦住了",
+    "off": {
+      "ms": 844,
+      "raw": "还需要确认下 preflight 的输出。",
+      "chars": 21,
+      "thinking": 0,
+      "out": 8,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "我怀疑是 preflight 拦住了还需要确认下 preflight 的输出。"
+    },
+    "high": {
+      "ms": 1628,
+      "raw": "，想确认它具体检查了哪些东西",
+      "chars": 14,
+      "thinking": 174,
+      "out": 184,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "我怀疑是 preflight 拦住了，想确认它具体检查了哪些东西。"
+    }
+  },
+  {
+    "draft": "测完把数字贴到 issue 里",
+    "off": {
+      "ms": 407,
+      "raw": "吗？",
+      "chars": 2,
+      "thinking": 0,
+      "out": 2,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "测完把数字贴到 issue 里吗？"
+    },
+    "high": {
+      "ms": 1006,
+      "raw": "，顺带记一下是哪个 job 挂的，我好接着查",
+      "chars": 22,
+      "thinking": 174,
+      "out": 190,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "测完把数字贴到 issue 里，顺带记一下是哪个 job 挂的，我好接着查。"
+    }
+  },
+  {
+    "draft": "帮我把 CHANGELOG 补上 0.31.61",
+    "off": {
+      "ms": 415,
+      "raw": "REWRITE:\n帮我把 CHANGELOG 补上 0.31.61 对应的条目。",
+      "chars": 40,
+      "thinking": 0,
+      "out": 23,
+      "finish": "stop",
+      "kind": "full",
+      "tail": "帮我把 CHANGELOG 补上 0.31.61 对应的条目。"
+    },
+    "high": {
+      "ms": 2492,
+      "raw": "",
+      "chars": 0,
+      "thinking": 384,
+      "out": 384,
+      "finish": "length",
+      "kind": "reject",
+      "tail": ""
+    }
+  },
+  {
+    "draft": "这个报错看着像是 socket 关闭",
+    "off": {
+      "ms": 838,
+      "raw": "相关的处理逻辑在哪个文件里？",
+      "chars": 14,
+      "thinking": 0,
+      "out": 8,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "这个报错看着像是 socket 关闭相关的处理逻辑在哪个文件里？"
+    },
+    "high": {
+      "ms": 1429,
+      "raw": "导致的，我去 dev/harness 的日志里确认一下",
+      "chars": 27,
+      "thinking": 85,
+      "out": 99,
+      "finish": "stop",
+      "kind": "append",
+      "tail": "这个报错看着像是 socket 关闭导致的，我去 dev/harness 的日志里确认一下。"
+    }
+  }
+]

@@ -1,6 +1,6 @@
 # 开发与验证
 
-> 适用版本：0.31.60 ｜ 无构建步骤：宿主与浏览器两端都是手写 ESM
+> 适用版本：0.31.61 ｜ 无构建步骤：宿主与浏览器两端都是手写 ESM
 
 
 ## 1. 目录结构
@@ -190,13 +190,14 @@ DSH_SCENARIO_LIMIT=14 python dev/verify_daily.py
 | --- | --- |
 | `request` | 客户端要什么（`pinnedModel`/`pinnedReasoning`，跟随会话时为空） |
 | `route-effective` | 实际跑的模型与强度，在解析处记录 |
-| `stream` / `stream-end` | 一条流式响应的开始 / 唯一终态行（`status`: `painted` `silent` `cached` `unchanged` `cancelled` `error`，含 `paintedChars` 与总 `ms`） |
-| `first-delta` | 首字到达，拆成 `queueMs`（请求进来到调模型）与 `modelMs`（调模型到首字） |
+| `stream` / `stream-end` | 一条流式响应的开始 / 唯一终态行（`status`: `painted` `silent` `cached` `unchanged` `cancelled` `error`，含 `path` `model` `effort` `paintedChars` `chars` `reasoning` `finish` `delivered` 与总 `ms`）。短草稿走 `path: "short"`，它不发 delta，只发一帧 `final`——`delivered` 就是给这条路径用的 |
+| `first-delta` | 首字到达，拆成 `queueMs`（请求进来到调模型）与 `modelMs`（调模型到首字）；`late: true` 表示这条请求早已收尾，首字属于仍在跑的模型调用，不能计入等待 |
 | `result` | 非流式（下一句）结果 |
 | `cancelled` | 请求被取消（客户端断开或新请求顶替） |
 | `error` / `compose-stream-error` | 失败（含状态码与被遮蔽前的消息） |
 | `history` / `history-error` | 历史拉取 |
 | `not-live`（客户端上报） | 会话未在宿主加载 → 退避中 |
+| `suppressed`（客户端上报） | 连续忽略后压住了一条整段改写 |
 | `cache-restored` | 启动时从磁盘恢复了多少条缓存 |
 | `cache-...` / `client-row` | 缓存与客户端包探测 |
 
