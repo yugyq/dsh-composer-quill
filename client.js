@@ -1993,16 +1993,23 @@ const COVERED_DEBOUNCE_MS = 1200
         // The host reports the draft from its own state, and the editor keeps the
         // previous Session's text until the swap lands: believing the prop alone paints
         // the ghost over text that is still there. Read the editor too.
-        const editorEmpty = (() => {
+        const editorText = (() => {
           const editor = editorEl()
-          if (editor === null) return true
-          const text = typeof editor.value === 'string' ? editor.value : (editor.textContent ?? '')
-          return text.trim() === ''
+          if (editor === null) return ''
+          return typeof editor.value === 'string' ? editor.value : (editor.textContent ?? '')
         })()
+        const editorEmpty = editorText.trim() === ''
         if (data.nextActive && editorEmpty) {
           anchor = 'box'
           ghostLayer.render({ inlineText: data.current, anchor: 'box' })
-        } else if (((data.composeActive && data.proposalIsTail) || data.historyActive) && caretAtEnd()) {
+        } else if (data.composeActive && data.proposalIsTail && caretAtEnd()) {
+          // Trim at paint time against the text that is really in the editor.
+          // Between a keystroke and the render that follows it this data is one
+          // draft behind, and painting it would put the character the user just
+          // typed on screen a second time.
+          anchor = 'caret'
+          ghostLayer.render({ inlineText: followRemainder(data.fullText, editorText.replace(/\s+$/, '')), anchor: 'caret' })
+        } else if (data.historyActive && caretAtEnd()) {
           anchor = 'caret'
           ghostLayer.render({ inlineText: data.proposal, anchor: 'caret' })
         } else {
@@ -2781,8 +2788,6 @@ const COVERED_DEBOUNCE_MS = 1200
       // ends with a newline (caret on an empty line) must be compared trimmed —
       // otherwise the tail looks like a full rewrite and no inline ghost paints.
       const draftBase = draft.replace(/\s+$/, '')
-      const remainder = followRemainder(composed, draftBase)
-      const fresh = state.forDraft === draft || state.forDraft === draftBase
       // A proposal that is already sitting in the editor is stale: this happens
       // right after Tab inserted it, while the tracked draft still lags a frame.
       const liveText = (() => {
@@ -2793,6 +2798,12 @@ const COVERED_DEBOUNCE_MS = 1200
           return draftBase
         }
       })()
+      // Trim against what is actually in the editor, not against the draft state
+      // that this render was handed. Between a keystroke and the state that
+      // follows it the two disagree for a frame, and trimming against the older
+      // one paints the character the user just typed a second time.
+      const remainder = followRemainder(composed, liveText.replace(/\s+$/, ''))
+      const fresh = state.forDraft === draft || state.forDraft === draftBase
       const alreadyInEditor = proposalIsStale(current, liveText)
       const nextActive = nextEnabled && !running && draftEmpty && state.kind === 'next' && current !== '' && !alreadyInEditor
       const composeActive = composeEnabled && !running
@@ -2958,6 +2969,7 @@ const COVERED_DEBOUNCE_MS = 1200
         current,
         kind: state.kind,
         forDraft: state.forDraft,
+        fullText: composed,
         draftLength: draft.length,
         sessionId,
       }
