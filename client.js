@@ -1858,9 +1858,17 @@ const COVERED_DEBOUNCE_MS = 1200
      * resizes, caret moves, and dialogs that cover it.
      */
     function useGhostPaint(input) {
-      const { visible, ghost, ghostLayer, paintData, dockBooking, sendDock, report } = input
+      const { visible, ghost, ghostLayer, paintData, dockBooking, sendDock, report, sessionId } = input
     // Paint the inline ghost while something is visible.
+    // Painting belongs to one Session: a switch must not leave the previous ghost on
+    // screen while the new composer is being filled in.
+    const paintedSession = React.useRef(sessionId)
     React.useEffect(() => {
+      if (paintedSession.current !== sessionId) {
+        paintedSession.current = sessionId
+        ghostLayer.clear()
+        return undefined
+      }
       if (!visible) {
         ghostLayer.clear()
         return undefined
@@ -1887,7 +1895,16 @@ const COVERED_DEBOUNCE_MS = 1200
         }
         const data = paintData.current
         let anchor = 'none'
-        if (data.nextActive) {
+        // The host reports the draft from its own state, and the editor keeps the
+        // previous Session's text until the swap lands: believing the prop alone paints
+        // the ghost over text that is still there. Read the editor too.
+        const editorEmpty = (() => {
+          const editor = editorEl()
+          if (editor === null) return true
+          const text = typeof editor.value === 'string' ? editor.value : (editor.textContent ?? '')
+          return text.trim() === ''
+        })()
+        if (data.nextActive && editorEmpty) {
           anchor = 'box'
           ghostLayer.render({ inlineText: data.current, anchor: 'box' })
         } else if (((data.composeActive && data.proposalIsTail) || data.historyActive) && caretAtEnd()) {
@@ -1954,7 +1971,7 @@ const COVERED_DEBOUNCE_MS = 1200
         document.removeEventListener('focusout', onFocusChange, true)
         if (frame !== null) window.cancelAnimationFrame(frame)
       }
-    }, [visible, ghost, ghostLayer])
+    }, [visible, ghost, ghostLayer, sessionId])
     }
 
     /**
@@ -2839,7 +2856,7 @@ const COVERED_DEBOUNCE_MS = 1200
         sessionId,
       }
 
-      useGhostPaint({ visible, ghost, ghostLayer, paintData, dockBooking, sendDock, report })
+      useGhostPaint({ visible, ghost, ghostLayer, paintData, dockBooking, sendDock, report, sessionId })
 
       useComposerKeys({
         visible, nextActive, items, ghost, ghostLayer, dismissAll, acceptRef,

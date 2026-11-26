@@ -245,6 +245,60 @@ def main() -> int:
         record("S12 切会话后不显示旧会话建议", chip == "" and ghost == "", f"chip={chip!r} ghost={ghost!r}")
         page.evaluate("() => window.__harness.setSession('s-harness')")
 
+        # ---- S48 切会话立刻清灰字（issue #5 的第 1 条）
+        reset("")
+        h("clearSuggestions()")
+        h("setSession('s48-a')")
+        before_switch = ""
+        for _ in range(25):
+            page.wait_for_timeout(200)
+            before_switch = (h("snapshot()")["text"] or {}).get("text", "")
+            if before_switch:
+                break
+        store_a = h("store()")
+        h("setSession('s48-b')")
+        page.wait_for_timeout(120)
+        after_switch = (h("snapshot()")["text"] or {}).get("text", "")
+        record(
+            "S48 切会话立刻清掉上一个会话的灰字",
+            bool(before_switch) and after_switch == "",
+            f"切前={before_switch[:14]!r} 切后120ms={after_switch[:14]!r} store={str(store_a)[:60]}",
+        )
+
+        # ---- S49 宿主说空、编辑器里还有字时不许画 box 灰字（issue #5 的第 2 条）
+        reset("")
+        h("clearSuggestions()")
+        h("setSession('s49')")
+        painted_with_empty = ""
+        for _ in range(25):
+            page.wait_for_timeout(200)
+            painted_with_empty = (h("snapshot()")["text"] or {}).get("text", "")
+            if painted_with_empty:
+                break
+        page.evaluate(
+            """() => {
+                const editor = document.querySelector('[data-composer-input]');
+                if (editor) {
+                    editor.textContent = '上一个会话留下的文字';
+                    window.dispatchEvent(new Event('resize'));
+                }
+            }"""
+        )
+        page.wait_for_timeout(500)
+        painted_with_text = (h("snapshot()")["text"] or {}).get("text", "")
+        record(
+            "S49 编辑器不空时不画 box 灰字",
+            bool(painted_with_empty) and painted_with_text == "",
+            f"空编辑器时={painted_with_empty[:12]!r} 有文字时={painted_with_text[:12]!r}",
+        )
+        page.evaluate(
+            """() => {
+                const editor = document.querySelector('[data-composer-input]');
+                if (editor) editor.textContent = '';
+            }"""
+        )
+        h("type('')")
+
         # ---- S13 灰字必须和正文落在同一个行盒里
         reset("")
         h("typeLive('帮我把这个报错的现象描述清楚', {delay: 60})")
@@ -1116,7 +1170,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 55
+EXPECTED_SCENARIOS = 57
 
 
 if __name__ == "__main__":
