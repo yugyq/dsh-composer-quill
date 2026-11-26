@@ -1850,7 +1850,14 @@ async function composeShortDraft(ctx, session, events, options) {
           chars: Array.from(delta).length,
         })
       }
-      const short = await ask(ctx, session, events, COMPOSE_RULES, shortPrompt, signal, shortDelta, 'compose', override)
+      // A one-to-three character draft has nothing to reason about, and a thinking
+      // model spends seconds discovering that. Same prompt, same model, measured
+      // against the provider: the panel's highest effort took 2975-7192 ms and
+      // spent 1.7k-4.6k characters thinking before writing 16-20 characters, while
+      // 'off' answered in 435-925 ms with no thinking at all. The panel still
+      // controls the rewrite path; this branch stays fast on purpose.
+      const shortOverride = { ...(override ?? {}), reasoningEffort: REASONING_EFFORT_OFF }
+      const short = await ask(ctx, session, events, COMPOSE_RULES, shortPrompt, signal, shortDelta, 'compose', shortOverride)
       if (progress !== null) {
         progress.finish = short.finish?.kind ?? null
         progress.chars = Array.from(short.text ?? '').length

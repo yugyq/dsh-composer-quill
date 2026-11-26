@@ -3006,6 +3006,32 @@ group('host: stream telemetry')
       assert.equal(lates[0].finish, 'stop')
     })
   })
+
+  await checkAsync('a one-character draft never pays for thinking', async () => {
+    await withTempState(async () => {
+      const seen = []
+      const ctx = {
+        get: () => undefined,
+        agents: { get: () => ({ session: { id: 's-trace', requestHeader: () => ({ config: { provider: 'p', model: 'trace-model' } }), snapshotEvents: () => [] } }) },
+        llm: {
+          async *stream(options) {
+            seen.push(options?.reasoningEffort)
+            yield { type: 'text-delta', text: '先跑一遍看还挂不挂。' }
+            yield { type: 'finish', reason: { kind: 'stop' } }
+          },
+        },
+      }
+      await composeStream(
+        ctx,
+        // The panel is on its highest setting; this branch has nothing to reason about
+        // and used to spend 3-7 s discovering that.
+        { sessionId: 's-trace', draft: '好', route: { reasoningEffort: 'max' } },
+        mkRes(),
+        new AbortController().signal,
+      )
+      assert.deepEqual(seen, ['off'], 'the short branch asks for no thinking at all')
+    })
+  })
 }
 
 const summary = [
