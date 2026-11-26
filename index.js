@@ -1481,6 +1481,10 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
   if (route === undefined) throw httpError('No model route is available for this Session', 409)
   if (overrideRoute !== undefined) trace('model-override', { provider: overrideRoute.provider, model: overrideRoute.model })
   if (effortOf(override?.reasoningEffort) !== undefined) trace('reasoning-setting', { effort })
+  // The route that actually ran, not the one the client asked for. "跟随会话" leaves the
+  // request body empty, so a log line that only records what the client sent cannot say
+  // which model answered — and every latency number computed from it is unattributable.
+  trace('route-effective', { mode, provider: route.provider, model: route.model, effort })
   let text = ''
   let finish
   let usage = null
@@ -1617,7 +1621,7 @@ function sseWriter(res) {
  * so the ghost starts growing in a few hundred milliseconds instead of after
  * the whole call. Frames: start, delta, retract, final, done, error.
  */
-async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, route: override }, res, signal) {
+async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, route: override, receivedAt = Date.now() }, res, signal) {
   // Validate before any header is flushed: afterwards the status is fixed at 200
   // and the browser can no longer tell "not live" from "model failed".
   {
@@ -1625,7 +1629,19 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     if (agent === null || agent === undefined) throw httpError('Session is not live in this Host', 409)
     if (typeof draft !== 'string' || draft.trim() === '') throw httpError('draft is required for a compose request', 400)
   }
-  const send = sseWriter(res)
+  const raw = sseWriter(res)
+  // One terminal line per response. Until now the only record of a stream was
+  // `first-delta`, so a request that never painted left no line at all — and every
+  // latency figure was computed on the survivors.
+  let status = 'error'
+  const progress = { painted: false, paintedChars: 0 }
+  const send = (event, payload) => {
+    if (event === 'delta' && typeof payload?.text === 'string' && payload.text !== '') {
+      progress.painted = true
+      progress.paintedChars += Array.from(payload.text).length
+    }
+    raw(event, payload)
+  }
   res.statusCode = 200
   res.setHeader('content-type', 'text/event-stream; charset=utf-8')
   res.setHeader('cache-control', 'no-store, no-transform')
@@ -1666,6 +1682,7 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     if (hit !== undefined) {
       // "Nothing changed" is now the normal case: record it so the reuse is visible.
       trace('cache-hit', { sessionId, mode: 'compose', kind: hit.kind ?? null, negative: typeof hit.text !== 'string' })
+      status = 'cached'
       replayCompose(send, hit, cleanDraft)
       res.end()
       return
@@ -1689,14 +1706,17 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
       // the client to drop the suggestion with no reason and no retry; say what happened.
       if (shared instanceof Error) {
         trace('compose-stream-error', { message: shared.message.slice(0, 120) })
+        status = 'error'
         send('error', { message: shared.message })
         res.end()
         return
       }
       const landed = cached(key)
       if (landed !== undefined) {
+        status = 'cached'
         replayCompose(send, landed, cleanDraft)
       } else {
+        status = 'unchanged'
         send('start', { mode: 'full' })
         send('done', { reason: 'unchanged' })
       }
@@ -1710,7 +1730,7 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     const workController = new AbortController()
     const workTimer = setTimeout(() => workController.abort(cancelled()), REQUEST_TIMEOUT_MS)
     workTimer.unref?.()
-    const work = produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, route: override, signal: workController.signal })
+    const work = produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, route: override, receivedAt, signal: workController.signal })
       .finally(() => clearTimeout(workTimer))
     composeInFlight.set(key, work)
     try {
@@ -1718,12 +1738,17 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     } finally {
       composeInFlight.delete(key)
     }
+    status = progress.painted ? 'painted' : 'silent'
     res.end()
     return
   } catch (error) {
-    if (error?.[ABORTED] === true) {
+    // An abort whose reason is not our marker (a bare AbortError from a closing
+    // socket) is still an abandoned stream, not a failure: the signal knows.
+    if (error?.[ABORTED] === true || signal?.aborted === true) {
+      status = 'cancelled'
       send('error', { message: 'cancelled' })
     } else {
+      status = 'error'
       const message = error instanceof Error ? error.message : String(error)
       trace('compose-stream-error', { message })
       send('error', { message: 'prediction failed' })
@@ -1731,6 +1756,13 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     try { res.end() } catch { /* already closed */ }
   } finally {
     clearTimeout(watchdog)
+    trace('stream-end', {
+      sessionId,
+      status,
+      painted: progress.painted,
+      paintedChars: progress.paintedChars,
+      ms: Date.now() - receivedAt,
+    })
   }
 }
 
@@ -1794,7 +1826,7 @@ async function composeShortDraft(ctx, session, events, options) {
       return true
 }
 
-async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal, route: override }) {
+async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal, receivedAt, route: override }) {
   try {
     // Two or three characters can only take a guess: the short-draft prompt gives one
     // or stays silent. Anything longer goes to the main compose, which can rewrite as
@@ -1845,7 +1877,14 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
     const first = await ask(ctx, session, events, COMPOSE_RULES, prompt, signal, (delta) => {
       if (!firstDeltaLogged) {
         firstDeltaLogged = true
-        trace('first-delta', { ms: Date.now() - startedAt, chars: delta.length })
+        // Split the wait where it actually went: everything before the model call
+        // (request read, session lookup, cache key) and everything inside it. The one
+        // merged number said "slow" without saying which half to fix.
+        trace('first-delta', {
+          queueMs: receivedAt === undefined ? null : startedAt - receivedAt,
+          modelMs: Date.now() - startedAt,
+          chars: delta.length,
+        })
       }
       if (decided) {
         acc += delta
@@ -2246,6 +2285,8 @@ function authorized(req, token) {
 
 async function handlePredict(ctx, token, req, res) {
   if (!preflight(req, res, token, { label: 'predict' })) return
+  // Everything the user waits for that is not the model: read, session lookup, cache key.
+  const receivedAt = Date.now()
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(httpError('prediction timed out', 504)), REQUEST_TIMEOUT_MS)
   timeout.unref?.()
@@ -2278,13 +2319,15 @@ async function handlePredict(ctx, token, req, res) {
     const mode = body?.mode === 'compose' || body?.mode === 'normalize' || body?.mode === 'continuation'
       ? 'compose'
       : 'next'
-    trace('request', { sessionId, mode, draftChars: draft.length, model: route?.model ?? null, reasoning: route?.reasoningEffort ?? null })
+    // What the client asked for, which is empty whenever the setting is "跟随会话".
+    // The route that ran is on `route-effective`, written where it is actually resolved.
+    trace('request', { sessionId, mode, draftChars: draft.length, pinnedModel: pickedRoute?.model ?? null, pinnedReasoning: reasoning ?? null })
     const wantsStream = mode === 'compose'
       && typeof req.headers.accept === 'string'
       && req.headers.accept.includes('text/event-stream')
     if (wantsStream) {
       trace('stream', { sessionId, draftChars: draft.length })
-      await withAbort(composeStream(ctx, { sessionId, draft, locale, forced, epoch, route }, res, controller.signal), controller.signal)
+      await withAbort(composeStream(ctx, { sessionId, draft, locale, forced, epoch, route, receivedAt }, res, controller.signal), controller.signal)
       return
     }
     const result = await withAbort(predict(ctx, { sessionId, draft, mode, locale, forced, epoch, route }, controller.signal), controller.signal)
@@ -2610,7 +2653,7 @@ function cacheEntries() {
   }))
 }
 
-export const __test = { handleModels, produceCompose, predict, cacheEntries, ledgerCandidates, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
+export const __test = { handleModels, produceCompose, composeStream, predict, cacheEntries, ledgerCandidates, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
 
 
 

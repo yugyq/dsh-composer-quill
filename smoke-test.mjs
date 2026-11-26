@@ -10,8 +10,8 @@
 process.env.DSH_COMPOSER_QUILL_NO_CACHE = '1'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, isAbsolute } from 'node:path'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join } from 'node:path'
 import { homedir, tmpdir as tmpdirOf } from 'node:os'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -2796,6 +2796,130 @@ group('host: budget')
     assert.equal(maxTokensFor('compose'), 384)
     assert.equal(maxTokensFor('rewrite'), 768, 'a long draft may be rewritten wholesale')
     assert.equal(maxTokensFor('unknown-mode'), 384, 'an unknown shape falls back to the safe one')
+  })
+}
+
+group('host: stream telemetry')
+
+{
+  const { composeStream } = host.__test
+
+  // A response object with just what an SSE write needs.
+  const mkRes = () => {
+    const chunks = []
+    const res = new EventEmitter()
+    res.statusCode = 0
+    res.writableEnded = false
+    res.destroyed = false
+    res.setHeader = () => {}
+    res.flushHeaders = () => {}
+    res.write = (chunk) => { chunks.push(String(chunk)); return true }
+    res.end = () => { res.writableEnded = true }
+    res.frames = () => chunks.join('')
+    return res
+  }
+
+  const mkCtx = (produce) => {
+    const session = {
+      id: 's-trace',
+      requestHeader: () => ({ config: { provider: 'p', model: 'trace-model' } }),
+      snapshotEvents: () => [],
+    }
+    return {
+      get: () => undefined,
+      agents: { get: () => ({ session }) },
+      llm: {
+        async *stream() {
+          yield* produce()
+        },
+      },
+    }
+  }
+
+  /** trace() appends without awaiting: poll instead of assuming the line landed. */
+  const readTrace = async (dir, event) => {
+    const file = join(dir, 'composer-quill.log')
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const rows = (existsSync(file) ? readFileSync(file, 'utf8').split('\n') : [])
+        .filter(Boolean)
+        .map((line) => { try { return JSON.parse(line) } catch { return null } })
+        .filter((row) => row?.event === event)
+      if (rows.length > 0) return rows
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    return []
+  }
+
+  const withTempState = async (body) => {
+    const dir = mkdtempSync(join(tmpdir(), 'quill-trace-'))
+    // DSH_PROFILE_DIR wins over DSH_HOME, and the Host sets both: moving only the
+    // latter wrote these test lines into the real log (it did, once).
+    const saved = { home: process.env.DSH_HOME, profile: process.env.DSH_PROFILE_DIR }
+    process.env.DSH_HOME = dir
+    process.env.DSH_PROFILE_DIR = dir
+    try {
+      return await body(dir)
+    } finally {
+      for (const [key, value] of [['DSH_HOME', saved.home], ['DSH_PROFILE_DIR', saved.profile]]) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  await checkAsync('a streamed compose leaves one terminal line that says it painted', async () => {
+    await withTempState(async (dir) => {
+      const res = mkRes()
+      const receivedAt = Date.now() - 25
+      await composeStream(
+        mkCtx(function* () {
+          yield { type: 'text-delta', text: '，顺便说下是哪个接口超时。' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        }),
+        { sessionId: 's-trace', draft: '帮我把这段日志整理一下', receivedAt },
+        res,
+        new AbortController().signal,
+      )
+      const ends = await readTrace(dir, 'stream-end')
+      assert.equal(ends.length, 1, 'exactly one terminal line per response')
+      assert.equal(ends[0].status, 'painted')
+      assert.equal(ends[0].painted, true)
+      assert.ok(ends[0].paintedChars > 0, 'paintedChars counts what reached the browser')
+      assert.ok(ends[0].ms >= 25, 'ms covers the wait from the request arriving')
+
+      // The old single `ms` hid whether the wait was the model or the plumbing.
+      const firsts = await readTrace(dir, 'first-delta')
+      assert.equal(firsts.length, 1)
+      assert.equal(typeof firsts[0].modelMs, 'number')
+      assert.ok(firsts[0].queueMs >= 25, 'queueMs covers the part before the model call')
+
+      // "跟随会话" leaves the request body empty: only this line knows what ran.
+      const routes = await readTrace(dir, 'route-effective')
+      assert.equal(routes[0].model, 'trace-model')
+      assert.equal(routes[0].provider, 'p')
+      assert.equal(routes[0].mode, 'compose')
+    })
+  })
+
+  await checkAsync('a stream the browser abandons is recorded as cancelled', async () => {
+    await withTempState(async (dir) => {
+      const controller = new AbortController()
+      controller.abort()
+      await composeStream(
+        mkCtx(function* () { /* never yields: the browser gave up first */ }),
+        // A different draft from the painted case: the memory cache is module-wide,
+        // and a hit would answer before the abort is ever looked at.
+        { sessionId: 's-trace', draft: '把这段日志整理成三条要点' },
+        mkRes(),
+        controller.signal,
+      )
+      const ends = await readTrace(dir, 'stream-end')
+      assert.equal(ends.length, 1, 'the abandoned stream still gets a line')
+      assert.equal(ends[0].status, 'cancelled')
+      assert.equal(ends[0].painted, false)
+      assert.equal(ends[0].paintedChars, 0)
+    })
   })
 }
 

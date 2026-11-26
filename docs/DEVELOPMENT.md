@@ -188,7 +188,11 @@ DSH_SCENARIO_LIMIT=14 python dev/verify_daily.py
 
 | 事件 | 含义 |
 | --- | --- |
-| `request` / `stream` / `result` / `first-delta` | 一次预测的生命周期 |
+| `request` | 客户端要什么（`pinnedModel`/`pinnedReasoning`，跟随会话时为空） |
+| `route-effective` | 实际跑的模型与强度，在解析处记录 |
+| `stream` / `stream-end` | 一条流式响应的开始 / 唯一终态行（`status`: `painted` `silent` `cached` `unchanged` `cancelled` `error`，含 `paintedChars` 与总 `ms`） |
+| `first-delta` | 首字到达，拆成 `queueMs`（请求进来到调模型）与 `modelMs`（调模型到首字） |
+| `result` | 非流式（下一句）结果 |
 | `cancelled` | 请求被取消（客户端断开或新请求顶替） |
 | `error` / `compose-stream-error` | 失败（含状态码与被遮蔽前的消息） |
 | `history` / `history-error` | 历史拉取 |
