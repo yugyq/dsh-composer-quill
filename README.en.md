@@ -4,6 +4,8 @@ Completion for the DSH composer. When a turn settles it offers a few next messag
 
 [中文说明](README.md)
 
+> If it earns its place in your composer, a [star](https://github.com/yugyq/dsh-composer-quill) is all I ask.
+
 ![Next message: candidates while the composer is empty, with the position shown on the chip](docs/assets/real-next.png)
 
 ```bash

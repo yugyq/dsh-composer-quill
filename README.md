@@ -2,6 +2,8 @@
 
 DSH 输入框的补全插件。[English](README.en.md)
 
+> 用得顺手就给个 [star](https://github.com/yugyq/dsh-composer-quill)，别的不用。
+
 回合结束时给几条「下一句」，你打字停一下就把后半句接上。`Tab` 采用，`Esc` 忽略；发送还是你自己按。
 
 ![下一句：输入框为空时给出候选，提示条上标着第几条](docs/assets/real-next.png)
