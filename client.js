@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.61'
+    const BUILD = '0.31.62'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -614,6 +614,8 @@ const COVERED_DEBOUNCE_MS = 1200
           recomputeSuppress()
         },
         /** True once, if the last finished stream was withheld on purpose. */
+        /** What the suppression rule is currently doing, for the dock-state beacon. */
+        suppressState: () => ({ on: suppressRewrites, streak: ignoredStreak, allow: allowSuppress }),
         takeSuppressed: () => {
           const was = lastSuppressed
           lastSuppressed = false
@@ -1883,6 +1885,8 @@ const COVERED_DEBOUNCE_MS = 1200
             pendingCompose: input.pendingCompose,
             pendingNext: input.pendingNext,
             statusLength: input.statusText.length,
+            suppressRewrites: input.suppress?.on === true,
+            ignoredStreak: input.suppress?.streak ?? 0,
             historyActive: input.historyActive,
             historyItems: input.history.items.length,
             draftEmpty: input.draftEmpty,
@@ -3008,9 +3012,12 @@ const COVERED_DEBOUNCE_MS = 1200
       // can still be missing, and a plugin that hides itself looks broken.
       // Why is nothing on screen? One line per decided state, so a silent UI has
       // a record of the exact inputs that produced it.
-      const decisionKey = `${state.phase}|${state.kind}|${state.items.length}|${nextActive}|${composeActive}|${historyActive}|${draftEmpty}|${running}`
+      // Suppression is invisible otherwise: a rewrite that never appears looks exactly
+      // like a rewrite that never arrived, and only one of those is a bug.
+      const suppress = ghost.suppressState?.() ?? { on: false, streak: 0, allow: true }
+      const decisionKey = `${state.phase}|${state.kind}|${state.items.length}|${nextActive}|${composeActive}|${historyActive}|${draftEmpty}|${running}|${suppress.on ? 'suppressed' : 'live'}:${suppress.streak}`
       useDockStateReport({
-        t, decisionKey, sessionId, session, running, draft, state, history, enabled,
+        t, decisionKey, sessionId, session, running, draft, state, history, enabled, suppress,
         nextActive, composeActive, historyActive, pendingCompose, pendingNext, statusText, draftEmpty,
         shown: nextActive ? current : proposal, learnedShown, report,
       })

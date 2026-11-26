@@ -1662,7 +1662,10 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     }
     if (event === 'final' && typeof payload?.text === 'string' && payload.text !== '') {
       progress.delivered = true
-      progress.paintedChars += Array.from(payload.text).length
+      // A streamed answer repeats itself in `final`: only count characters that were
+      // never counted as deltas, or `paintedChars` reads about 2x the suggestion
+      // (57 against 26 in the first real rows after 0.31.61).
+      if (!progress.painted) progress.paintedChars += Array.from(payload.text).length
     }
     raw(event, payload)
   }

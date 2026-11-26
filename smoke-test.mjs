@@ -2931,6 +2931,13 @@ group('host: stream telemetry')
       assert.equal(ends[0].status, 'painted')
       assert.equal(ends[0].painted, true)
       assert.ok(ends[0].paintedChars > 0, 'paintedChars counts what reached the browser')
+      // A streamed answer repeats its text in `final`: counting both made
+      // paintedChars read about twice the suggestion in the first real rows.
+      assert.equal(
+        ends[0].paintedChars,
+        ends[0].chars,
+        'the characters of one suggestion are counted once, not once per frame',
+      )
       assert.ok(ends[0].ms >= 25, 'ms covers the wait from the request arriving')
 
       // The old single `ms` hid whether the wait was the model or the plumbing.
