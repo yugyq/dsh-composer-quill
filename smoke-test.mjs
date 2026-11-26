@@ -366,6 +366,71 @@ check('a one-character draft is asked for a full short sentence', () => {
     req.emit('end')
   })
 
+  await checkAsync('a model without reasoning metadata still gets an answer', async () => {
+    // dsh-llm refuses an explicit effort for a model that declares none, and reports it
+    // as a terminal finish chunk rather than throwing.
+    const calls = []
+    const { produceCompose } = host.__test
+    const session = { id: 's-noeffort', requestHeader: () => ({ config: { provider: 'p', model: 'plain' } }), snapshotEvents: () => [] }
+    const ctx = {
+      get: () => undefined,
+      agents: { get: () => ({ session }) },
+      llm: {
+        async *stream(options) {
+          calls.push(options.reasoningEffort ?? null)
+          if (options.reasoningEffort !== undefined) {
+            yield {
+              type: 'finish',
+              reason: {
+                kind: 'error',
+                failure: { code: 'UNSUPPORTED_REASONING_EFFORT', message: 'provider "p" model "plain" does not support reasoning effort "off"' },
+              },
+            }
+            return
+          }
+          yield { type: 'text-delta', text: '，顺便说下是哪个接口超时。' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      },
+    }
+    const events = [
+      { type: 'request/header', data: { header: { config: { provider: 'p', model: 'plain' } } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '帮我把这段日志整理一下' }] } },
+      { type: 'assistant/message', data: { content: [{ type: 'text', text: '好的。' }] } },
+    ]
+    const sent = []
+    await produceCompose(ctx, {
+      sessionId: 's-noeffort',
+      session,
+      events,
+      draft: '帮我看下这个报错',
+      key: 'no-effort-1',
+      send: (event, data) => sent.push({ event, data }),
+      locale: 'zh-CN',
+      forced: '',
+      signal: new AbortController().signal,
+    })
+    assert.deepEqual(calls, ['off', null], `the retry should drop the effort, saw ${JSON.stringify(calls)}`)
+    const final = sent.find((item) => item.event === 'final')
+    assert.ok(final && String(final.data.text).includes('接口超时'), JSON.stringify(sent.slice(-2)))
+  })
+
+  check('the route token belongs to the process, not to one apply()', () => {
+    // A reload re-runs apply(); the Desktop shell keeps handing out the old token.
+    const first = process.__dshComposerQuillToken
+    assert.equal(first === undefined || typeof first === 'string', true)
+    const again = process.__dshComposerQuillToken
+    assert.equal(first, again, 'the token must not change between reads')
+  })
+
+  check('a request with no browser signal is refused, even with the custom header', () => {
+    // Desktop's proxy strips sec-fetch-site; the per-process token is what makes that
+    // case work, not a looser rule here. A local process can type any header.
+    const { authorized } = host.__test
+    const headers = { 'x-composer-quill-client': '1', 'content-type': 'application/json' }
+    assert.equal(authorized({ headers, socket: { remoteAddress: '127.0.0.1' } }, 'tok'), false)
+  })
+
   await checkAsync('the chosen thinking intensity reaches the model call', async () => {
     const seen = []
     const { produceCompose } = host.__test

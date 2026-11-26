@@ -1,0 +1,21 @@
+release: 0.31.60 — the route token belongs to the process, and a refused effort is retried
+
+issue #6, three parts.
+
+- The route token was created in apply(), so an in-place plugin reload rotated it while
+  the Desktop shell kept handing out the token it collected at start: every route
+  answered 401 until the whole app restarted. It is now created once per process and kept
+  on `process`, which matches when Desktop re-collects its injection table.
+- dsh-llm refuses an explicit reasoning effort for a model with no reasoning metadata by
+  converting the throw into a terminal finish chunk, so the retry that meant to catch it
+  never ran (21 compose-stream-error, 0 reasoning-off-rejected in the report). The finish
+  chunk's UNSUPPORTED_REASONING_EFFORT now triggers the same retry without the field.
+- With no environment hint the state directory fell back to the home directory while the
+  docs name ~/.dsh, splitting logs and cache across two places. It now prefers an
+  existing ~/.dsh.
+
+authorized() is unchanged: a request with no browser signal is still refused, because a
+local process can type the custom header too. The per-process token is what makes the
+Desktop case work.
+
+单测 141、场景 57。

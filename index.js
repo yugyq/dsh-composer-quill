@@ -1222,7 +1222,15 @@ function stateDirectory() {
   const env = `${profile ?? ''}|${home ?? ''}`
   if (stateDir !== null && stateDirEnv === env) return stateDir
   stateDirEnv = env
-  stateDir = profile ?? home ?? homedir() ?? tmpdir()
+  if (profile !== undefined || home !== undefined) {
+    stateDir = profile ?? home
+    return stateDir
+  }
+  // No environment hint. The documented location is ~/.dsh; a launch that ran before the
+  // Host set those variables used to fall back to the home directory and split the
+  // state across two places, so prefer ~/.dsh when it exists.
+  const base = homedir() ?? tmpdir()
+  stateDir = existsSync(join(base, '.dsh')) ? join(base, '.dsh') : base
   return stateDir
 }
 
@@ -1537,13 +1545,26 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
 
   const cap = capFor(mode, effort)
   let attempt
+  const effortToSend = effort === REASONING_EFFORT_OFF || effort === undefined ? REASONING_EFFORT_OFF : effort
+  const looksLikeEffortRefusal = (message) => /reasoning|effort|unsupported|invalid/i.test(message)
   try {
-    attempt = await runStream({ reasoningEffort: effort === REASONING_EFFORT_OFF || effort === undefined ? REASONING_EFFORT_OFF : effort, maxTokens: cap })
+    attempt = await runStream({ reasoningEffort: effortToSend, maxTokens: cap })
   } catch (error) {
     const message = String(error?.message ?? error)
-    if (!/reasoning|effort|unsupported|invalid/i.test(message) || signal.aborted) throw error
+    if (!looksLikeEffortRefusal(message) || signal.aborted) throw error
     trace('reasoning-off-rejected', { model: route.model, message: message.slice(0, 120) })
     attempt = await runStream({ maxTokens: cap })
+  }
+  // dsh-llm turns a provider refusal into a terminal finish chunk instead of throwing:
+  // a model with no reasoning metadata rejects 'off' like any other level, and the
+  // catch above never sees it.
+  if (attempt.finish?.kind === 'error') {
+    const message = String(attempt.finish.failure?.message ?? 'model call failed')
+    const code = attempt.finish.failure?.code
+    if (code === 'UNSUPPORTED_REASONING_EFFORT' || looksLikeEffortRefusal(message)) {
+      trace('reasoning-off-rejected', { model: route.model, message: message.slice(0, 120), via: 'finish' })
+      attempt = await runStream({ maxTokens: cap })
+    }
   }
   if (attempt.text.trim() === '' && attempt.finish?.kind === 'max-tokens') {
     // The effort was ignored or not available: the model thought until the budget ran
@@ -2213,6 +2234,10 @@ function authorized(req, token) {
   // routes never approve one. `sec-fetch-site` alone is spoofable by any local
   // process, and a DNS-rebound page is served from the same host, so the header
   // is what actually keeps other pages out.
+  // Not an absent header: a local process can type the custom header too, and the
+  // browser's own signal is what tells the two apart. Desktop's proxy strips it, so a
+  // forwarded page request is refused here — the per-process route token is what makes
+  // that case work instead (see the token in apply()).
   return req.headers[CLIENT_HEADER] === '1'
     && site === 'same-origin'
     && mode !== 'navigate'
@@ -2493,7 +2518,11 @@ async function handleBeacon(token, req, res) {
  * @param ctx - plugin context.
  */
 export function apply(ctx) {
-  const token = randomBytes(32).toString('base64url')
+  // Per process, not per apply(): an in-place plugin reload re-runs apply(), and the
+  // Desktop shell hands out the boot payload it collected at start — a new token there
+  // means every route 401s until the whole app restarts.
+  const TOKEN_KEY = '__dshComposerQuillToken'
+  const token = (process[TOKEN_KEY] ??= randomBytes(32).toString('base64url'))
   // Suggestions from the previous run are still valid: reuse them instead of
   // paying for the same model call again after a restart.
   trace('cache-restored', { entries: loadCache() })
