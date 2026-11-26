@@ -1,0 +1,21 @@
+release: 0.31.58 — the usage ledger can no longer be shrunk
+
+0.31.57 shipped a regression that zeroed a ledger: two processes could read different
+directories for the same counter, and the last flush won.
+
+This release makes that impossible from three sides:
+
+- flushUsage reads the target first and refuses to write a smaller lifetime.calls,
+  merging the disk copy into memory instead and tracing usage-ledger-kept
+- loadUsage reads every candidate directory (state dir, DSH_HOME, DSH_PROFILE_DIR, the
+  home directory and its .dsh) and keeps the larger value per metric
+- after a merge that found more history than the canonical file holds, it writes the
+  merged result immediately, so the extra does not sit only in memory
+
+Also fixed: an environment variable set to an empty string was treated as a directory,
+so join('', name) wrote to the process working directory. Empty now means unset.
+
+dev/rebuild-usage.mjs rebuilds the ledger from the live log, counting only real model
+names (the profile-directory log holds the test suite's own calls).
+
+单测 136、场景 55。

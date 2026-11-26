@@ -1173,11 +1173,17 @@ const usageLedger = { file: null, data: emptyLedger(), session: new Map(), dirty
  */
 let stateDir = null
 let stateDirEnv = null
+/** An environment variable is a directory only when it actually names one. */
+function envDir(value) {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+}
 function stateDirectory() {
-  const env = `${process.env.DSH_PROFILE_DIR ?? ''}|${process.env.DSH_HOME ?? ''}`
+  const profile = envDir(process.env.DSH_PROFILE_DIR)
+  const home = envDir(process.env.DSH_HOME)
+  const env = `${profile ?? ''}|${home ?? ''}`
   if (stateDir !== null && stateDirEnv === env) return stateDir
   stateDirEnv = env
-  stateDir = process.env.DSH_PROFILE_DIR ?? process.env.DSH_HOME ?? homedir() ?? tmpdir()
+  stateDir = profile ?? home ?? homedir() ?? tmpdir()
   return stateDir
 }
 
@@ -1187,9 +1193,14 @@ function stateDirectory() {
  * and keeping the largest totals is how history survives a location change.
  */
 function ledgerCandidates() {
-  const dirs = new Set([stateDirectory(), join(homedir() ?? stateDir ?? '.', '.dsh'), homedir() ?? '.'])
-  if (process.env.DSH_HOME !== undefined && process.env.DSH_HOME !== '') dirs.add(process.env.DSH_HOME)
-  if (process.env.DSH_PROFILE_DIR !== undefined && process.env.DSH_PROFILE_DIR !== '') dirs.add(process.env.DSH_PROFILE_DIR)
+  const dirs = new Set([stateDirectory()])
+  const home = homedir()
+  if (home) dirs.add(home)
+  const dshHome = envDir(process.env.DSH_HOME)
+  if (dshHome !== undefined) dirs.add(dshHome)
+  const profile = envDir(process.env.DSH_PROFILE_DIR)
+  if (profile !== undefined) dirs.add(profile)
+  if (home) dirs.add(join(home, '.dsh'))
   return [...dirs].map((dir) => join(dir, 'composer-quill-usage.json'))
 }
 
@@ -1361,6 +1372,19 @@ async function loadUsage() {
       byMode: merged.byMode ?? {},
       byModel: merged.byModel ?? {},
       days: merged.days ?? {},
+    }
+    // If the merge found more history than the file we normally write holds, persist it:
+    // otherwise the extra sits in memory until something else triggers a flush, and a
+    // crash in between loses it again.
+    let onDisk = 0
+    try {
+      onDisk = JSON.parse(await readFileAsync(target, 'utf8'))?.lifetime?.calls ?? 0
+    } catch {
+      onDisk = 0
+    }
+    if ((usageLedger.data.lifetime.calls ?? 0) > onDisk) {
+      usageLedger.dirty = true
+      await flushUsage()
     }
   } catch (error) {
     usageLedger.data = emptyLedger()
