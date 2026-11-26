@@ -48,3 +48,4 @@ _*.txt
 _*.py
 _*.md
 _*.patch
+_*.json
