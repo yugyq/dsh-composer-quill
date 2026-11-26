@@ -1181,6 +1181,41 @@ function stateDirectory() {
   return stateDir
 }
 
+/**
+ * Every place a ledger could have been written: the current state directory, the DSH
+ * home, and the home directory that older builds fell back to. Loading from all three
+ * and keeping the largest totals is how history survives a location change.
+ */
+function ledgerCandidates() {
+  const dirs = new Set([stateDirectory(), join(homedir() ?? stateDir ?? '.', '.dsh'), homedir() ?? '.'])
+  if (process.env.DSH_HOME !== undefined && process.env.DSH_HOME !== '') dirs.add(process.env.DSH_HOME)
+  if (process.env.DSH_PROFILE_DIR !== undefined && process.env.DSH_PROFILE_DIR !== '') dirs.add(process.env.DSH_PROFILE_DIR)
+  return [...dirs].map((dir) => join(dir, 'composer-quill-usage.json'))
+}
+
+/** Keep whichever bucket is ahead; these are snapshots of one cumulative counter. */
+function mergeLedgerData(a, b) {
+  const bigger = (left, right) => (left === undefined ? right : right === undefined ? left : Math.max(left, right))
+  const mergeBucket = (left = {}, right = {}) => {
+    const out = { ...emptyUsage(), ...left }
+    for (const key of Object.keys(emptyUsage())) out[key] = bigger(left[key], right[key])
+    return out
+  }
+  const mergeMap = (left = {}, right = {}) => {
+    const keys = new Set([...Object.keys(left), ...Object.keys(right)])
+    const out = {}
+    for (const key of keys) out[key] = mergeBucket(left[key], right[key])
+    return out
+  }
+  return {
+    version: USAGE_VERSION,
+    lifetime: mergeBucket(a.lifetime, b.lifetime),
+    byMode: mergeMap(a.byMode, b.byMode),
+    byModel: mergeMap(a.byModel, b.byModel),
+    days: mergeMap(a.days, b.days),
+  }
+}
+
 function usageLedgerPath() {
   const next = join(stateDirectory(), 'composer-quill-usage.json')
   // The directory can move (see stateDirectory). Keep the file with it: a ledger left
@@ -1277,6 +1312,21 @@ async function flushUsage() {
   if (usageLedger.dirty !== true) return false
   usageLedger.dirty = false
   const target = usageLedgerPath()
+  // Another process may hold a longer history for the same counter (they used to write
+  // to different directories). Replacing it with a smaller one is how 360 calls vanished.
+  try {
+    const onDisk = JSON.parse(await readFileAsync(target, 'utf8'))
+    if ((onDisk?.lifetime?.calls ?? 0) > (usageLedger.data?.lifetime?.calls ?? 0)) {
+      trace('usage-ledger-kept', {
+        disk: onDisk.lifetime.calls,
+        memory: usageLedger.data?.lifetime?.calls ?? 0,
+      })
+      usageLedger.data = mergeLedgerData(onDisk, usageLedger.data ?? emptyLedger())
+      return false
+    }
+  } catch {
+    // No file yet, or unreadable: writing is the right move.
+  }
   const temp = `${target}.${process.pid}.${(stateFileSeq += 1)}.tmp`
   try {
     await writeFileAsync(temp, `${JSON.stringify(usageLedger.data, null, 2)}\n`)
@@ -1290,16 +1340,27 @@ async function flushUsage() {
 
 async function loadUsage() {
   const target = usageLedgerPath()
+  let merged = null
+  let worst = null
+  for (const file of ledgerCandidates()) {
+    try {
+      const text = await readFileAsync(file, 'utf8')
+      const parsed = JSON.parse(text)
+      if (parsed === null || typeof parsed !== 'object' || parsed.version !== USAGE_VERSION) throw new Error('shape')
+      merged = merged === null ? parsed : mergeLedgerData(merged, parsed)
+    } catch (error) {
+      // A missing file is the normal case; anything else is worth a line in the log.
+      if (error?.code !== 'ENOENT') worst = worst ?? error
+    }
+  }
   try {
-    const text = await readFileAsync(target, 'utf8')
-    const parsed = JSON.parse(text)
-    if (parsed === null || typeof parsed !== 'object' || parsed.version !== USAGE_VERSION) throw new Error('shape')
+    if (merged === null) throw worst ?? Object.assign(new Error('no ledger'), { code: 'ENOENT' })
     usageLedger.data = {
       version: USAGE_VERSION,
-      lifetime: { ...emptyUsage(), ...(parsed.lifetime ?? {}) },
-      byMode: parsed.byMode ?? {},
-      byModel: parsed.byModel ?? {},
-      days: parsed.days ?? {},
+      lifetime: { ...emptyUsage(), ...(merged.lifetime ?? {}) },
+      byMode: merged.byMode ?? {},
+      byModel: merged.byModel ?? {},
+      days: merged.days ?? {},
     }
   } catch (error) {
     usageLedger.data = emptyLedger()

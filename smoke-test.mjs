@@ -10,7 +10,7 @@
 process.env.DSH_COMPOSER_QUILL_NO_CACHE = '1'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { homedir, tmpdir as tmpdirOf } from 'node:os'
 import { tmpdir } from 'node:os'
@@ -2381,6 +2381,25 @@ group('host: usage')
     assert.equal(snap.byModel['deepseek-flash'].calls, 2)
     assert.equal(snap.session.calls, 2)
     assert.equal(snap.today.calls, 2)
+  })
+
+  await checkAsync('a smaller ledger never replaces a bigger one on disk', async () => {
+    const { noteUsage, flushUsage, usageLedgerPath, resetUsage, loadUsage, usageSnapshot } = host.__test
+    const file = usageLedgerPath()
+    writeFileSync(file, JSON.stringify({ version: 1, lifetime: { calls: 300, input: 1000 }, byMode: {}, byModel: {}, days: {} }))
+
+    // memory thinks it has one call; the file says 300. The file wins.
+    resetUsage()
+    noteUsage({ mode: 'compose', model: 'deepseek-flash', usage: { inputTokens: 5 } })
+    await flushUsage()
+
+    const after = JSON.parse(readFileSync(file, 'utf8'))
+    assert.equal(after.lifetime.calls >= 300, true, `on disk: ${after.lifetime.calls}`)
+    await loadUsage()
+    const snap = usageSnapshot({})
+    assert.equal(snap.lifetime.calls >= 300, true, `in memory: ${snap.lifetime.calls}`)
+    rmSync(file, { force: true })
+    resetUsage()
   })
 
   check('a call without usage counts as void and moves no tokens', () => {
