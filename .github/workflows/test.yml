@@ -37,8 +37,12 @@ jobs:
           python-version: '3.12'
       # The simulator bundle is a build artifact and is not committed; rebuild it from
       # client.js before running the scenarios, or the suite tests yesterday's code.
+      # The harness has its own package.json (react, react-dom, esbuild) — this job kept
+      # failing with "Could not resolve react" until it installed them.
+      - name: Install the simulator's dependencies
+        run: npm ci --prefix dev/harness --no-audit --no-fund
       - name: Build the simulator bundle
-        run: npx --yes esbuild@0.24.0 dev/harness/src.js --bundle --format=iife --target=chrome120 --outfile=dev/harness/bundle.js
+        run: node dev/harness/node_modules/esbuild/bin/esbuild dev/harness/src.js --bundle --format=iife --target=chrome120 --outfile=dev/harness/bundle.js
       - name: Install Playwright and Chromium
         run: |
           python -m pip install --upgrade pip
