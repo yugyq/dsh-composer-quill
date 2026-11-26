@@ -1787,6 +1787,10 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
       finish: progress.finish,
       ms: Date.now() - receivedAt,
     })
+    // The model call outlives an abandoned request on purpose. Everything the
+    // producer logs afterwards is work nobody was waiting for, and mixing it into
+    // the wait statistics made cancelled requests look slow instead of abandoned.
+    progress.settled = true
   }
 }
 
@@ -1840,6 +1844,7 @@ async function composeShortDraft(ctx, session, events, options) {
         trace('first-delta', {
           path: 'short',
           painted: false,
+          late: progress !== null && progress.settled === true,
           queueMs: receivedAt === undefined ? null : shortStartedAt - receivedAt,
           modelMs: Date.now() - shortStartedAt,
           chars: Array.from(delta).length,
@@ -1850,6 +1855,9 @@ async function composeShortDraft(ctx, session, events, options) {
         progress.finish = short.finish?.kind ?? null
         progress.chars = Array.from(short.text ?? '').length
         progress.reasoning = short.reasoning ?? 0
+      }
+      if (progress !== null && progress.settled === true) {
+        trace('stream-late', { path: 'short', status: 'late', chars: progress.chars, reasoning: progress.reasoning, finish: progress.finish })
       }
       const parsedShort = parseComposeReply(short.text, cleanDraft, {
         language: resolveLanguage({ locale, forced }),
@@ -1928,6 +1936,7 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
         // merged number said "slow" without saying which half to fix.
         trace('first-delta', {
           path: 'main',
+          late: progress !== null && progress.settled === true,
           queueMs: receivedAt === undefined ? null : startedAt - receivedAt,
           modelMs: Date.now() - startedAt,
           chars: delta.length,
@@ -1950,6 +1959,11 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
       progress.finish = first.finish?.kind ?? null
       progress.chars = Array.from(first.text ?? '').length
       progress.reasoning = first.reasoning ?? 0
+    }
+    if (progress !== null && progress.settled === true) {
+      // Nobody is waiting for this any more. Say what the abandoned call did
+      // produce, so cancelling can be priced instead of guessed at.
+      trace('stream-late', { path: 'main', status: 'late', chars: progress.chars, reasoning: progress.reasoning, finish: progress.finish })
     }
     if (!decided) decide(head)
     const replyRaw = first.text

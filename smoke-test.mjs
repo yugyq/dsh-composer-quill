@@ -2973,6 +2973,39 @@ group('host: stream telemetry')
       assert.ok(firsts[0].queueMs >= 30, 'queueMs still measures the wait before the call')
     })
   })
+
+  await checkAsync('work that outlives its request is marked late, not counted as wait', async () => {
+    await withTempState(async (dir) => {
+      const controller = new AbortController()
+      // The browser gives up on every keystroke; the model call keeps running on
+      // purpose. Its arrival must not later be read as "this request took long".
+      setTimeout(() => controller.abort(), 40)
+      await composeStream(
+        mkCtx(async function* () {
+          await new Promise((resolve) => setTimeout(resolve, 140))
+          yield { type: 'text-delta', text: '，先按时间顺序把三条要点列出来。' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        }),
+        { sessionId: 's-trace', draft: '把这段日志按时间顺序整理成三条要点' },
+        mkRes(),
+        controller.signal,
+      )
+      const ends = await readTrace(dir, 'stream-end')
+      assert.equal(ends.length, 1)
+      assert.equal(ends[0].status, 'cancelled')
+      assert.equal(ends[0].chars, 0, 'the terminal line cannot know what it never waited for')
+
+      const firsts = await readTrace(dir, 'first-delta')
+      assert.equal(firsts.length, 1)
+      assert.equal(firsts[0].late, true, 'the late token is labelled')
+
+      const lates = await readTrace(dir, 'stream-late')
+      assert.equal(lates.length, 1, 'the abandoned call still reports what it produced')
+      assert.equal(lates[0].path, 'main')
+      assert.ok(lates[0].chars > 0)
+      assert.equal(lates[0].finish, 'stop')
+    })
+  })
 }
 
 const summary = [
