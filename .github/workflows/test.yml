@@ -42,7 +42,7 @@ jobs:
       - name: Install the simulator's dependencies
         run: npm ci --prefix dev/harness --no-audit --no-fund
       - name: Build the simulator bundle
-        run: node dev/harness/node_modules/esbuild/bin/esbuild dev/harness/src.js --bundle --format=iife --target=chrome120 --outfile=dev/harness/bundle.js
+        run: node dev/harness/build.mjs
       - name: Install Playwright and Chromium
         run: |
           python -m pip install --upgrade pip
