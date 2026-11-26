@@ -1114,13 +1114,27 @@ def main() -> int:
     return 0 if not failed else 1
 
 
+# The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
+# added or deleted without updating the docs — say so instead of quietly reporting N/N.
+EXPECTED_SCENARIOS = 55
+
+
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        code = main()
+        if EXPECTED_SCENARIOS is not None and len(results) != EXPECTED_SCENARIOS:
+            print(
+                f"\n@@ 场景数量对不上：实际跑了 {len(results)} 条，预期 {EXPECTED_SCENARIOS} 条。"
+                " 加/删场景时请同步 EXPECTED_SCENARIOS 与文档里的数字。"
+            )
+            code = 1
+        sys.exit(code)
     except _ScenarioLimit:
         passed = sum(1 for _, ok, _ in results if ok)
-        print(f"\n已跑 {len(results)} 条（DSH_SCENARIO_LIMIT），{passed} 通过")
-        sys.exit(0)
+        failed = len(results) - passed
+        print(f"\n已跑 {len(results)} 条（DSH_SCENARIO_LIMIT），{passed} 通过，{failed} 失败")
+        # A partial run that already saw a failure is a failure, not a pass.
+        sys.exit(0 if failed == 0 else 1)
 
 
 

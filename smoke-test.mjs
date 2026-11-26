@@ -112,7 +112,12 @@ const check = (name, fn) => {
   if (!matches(name)) { skipped += 1; return }
   const started = performance.now()
   try {
-    fn()
+    // An async body here used to be reported as a pass without ever running its
+    // assertions. Fail loudly instead: a case that awaits belongs in checkAsync.
+    const returned = fn()
+    if (returned !== null && typeof returned === 'object' && typeof returned.then === 'function') {
+      throw new Error("check() received an async callback; use await checkAsync('" + name + "', …)")
+    }
     record(name, true, '', performance.now() - started)
   } catch (error) {
     record(name, false, error.message, performance.now() - started)
@@ -1495,7 +1500,7 @@ check('acceptance feedback reorders candidates, never invents them', () => {
   assert.ok(summary.rate > 0.4 && summary.rate < 1, JSON.stringify(summary))
 })
 
-check('a truncated stream is reported as a failure', async () => {
+await checkAsync('a truncated stream is reported as a failure', async () => {
   const { streamRoute } = moduleExports.__test
   const frames = [
     'event: start\ndata: {"mode":"append"}\n\n',
@@ -1533,7 +1538,7 @@ check('a truncated stream is reported as a failure', async () => {
   }
 })
 
-check('streaming frames arrive in order and end with done', async () => {
+await checkAsync('streaming frames arrive in order and end with done', async () => {
   const { streamRoute } = moduleExports.__test
   const frames = [
     'event: start\ndata: {"mode":"full"}\n\n',
@@ -2396,8 +2401,8 @@ group('host: usage')
     assert.equal(isPeak(sunday), false)
   })
 
-  check('the model list comes from the Host and is cached', async () => {
-    const { handleModels } = moduleExports.__test
+  await checkAsync('the model list comes from the Host and is cached', async () => {
+    const { handleModels } = host.__test
     let listed = 0
     const ctx = {
       llm: {
@@ -2411,17 +2416,41 @@ group('host: usage')
         },
       },
     }
-    const res = makeRes()
-    await handleModels(ctx, 'test-token', makeReq({ token: 'test-token' }), res)
-    assert.equal(res.statusCode, 200)
-    const body = JSON.parse(res.body)
+
+    // preflight() requires POST with the token header; the response is collected the
+    // same way the route tests do it.
+    const ask = () => new Promise((resolve) => {
+      const req = new EventEmitter()
+      req.method = 'POST'
+      req.headers = {
+        'content-type': 'application/json',
+        'sec-fetch-site': 'same-origin',
+        'x-composer-quill-client': '1',
+        host: 'localhost',
+        'x-composer-quill-token': 'test-token',
+      }
+      const res = new EventEmitter()
+      res.statusCode = 0
+      res.headers = {}
+      res.writableEnded = false
+      res.destroyed = false
+      res.setHeader = (name, value) => { res.headers[name] = value }
+      res.end = (payload) => { res.writableEnded = true; resolve({ status: res.statusCode, body: payload }) }
+      handleModels(ctx, 'test-token', req, res)
+      req.emit('data', Buffer.from('{}'))
+      req.emit('end')
+    })
+
+    const first = await ask()
+    assert.equal(first.status, 200, `body=${first.body}`)
+    const body = JSON.parse(first.body)
     assert.equal(body.providers.length, 2)
     assert.equal(body.providers[0].models.length, 1, 'nameless entries are dropped')
     assert.equal(body.providers[0].models[0].id, 'v4-flash')
     assert.equal(body.providers[1].models.length, 0, 'a provider that throws is empty, not fatal')
-    // second call is served from the cache
-    await handleModels(ctx, 'test-token', makeReq({ token: 'test-token' }), makeRes())
-    assert.equal(listed, 1, 'listProviders ran once')
+
+    await ask()
+    assert.equal(listed, 1, 'the second call is served from the cache')
   })
 
   check('cost uses the cache-hit rate for cached input', () => {
