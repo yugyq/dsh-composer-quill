@@ -15,7 +15,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { readFileSync, renameSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, statSync } from 'node:fs'
 import { appendFile, readFile as readFileAsync, rename as renameAsync, writeFile as writeFileAsync } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -172,6 +172,9 @@ const COMPOSE_RULES = [
 
 /** Append one JSONL diagnostic line next to the profile. Best-effort only. */
 const LOG_MAX_BYTES = 2 * 1024 * 1024
+// A debounced write can overlap an explicit one (the reset button). With a pid-only temp
+// name both wrote the same file and the second rename could land half-written JSON.
+let stateFileSeq = 0
 let traceCount = 0
 
 /** Keep one previous log: a runaway diagnostic must not fill the disk. */
@@ -185,9 +188,8 @@ function rotateLog(file) {
 
 function trace(event, data) {
   try {
-    const dir = process.env.DSH_PROFILE_DIR ?? process.env.DSH_HOME ?? homedir() ?? tmpdir()
     const line = `${JSON.stringify({ at: new Date().toISOString(), event, ...data })}\n`
-    const file = join(dir, 'composer-quill.log')
+    const file = join(stateDirectory(), 'composer-quill.log')
     traceCount += 1
     // Checking the size on every line would be a syscall per request.
     if (traceCount % 200 === 0) rotateLog(file)
@@ -1011,7 +1013,7 @@ function cached(key) {
 /** Where the suggestion cache lives between runs. */
 function cacheFile() {
   const dir = process.env.DSH_PROFILE_DIR ?? process.env.DSH_HOME ?? homedir() ?? tmpdir()
-  return join(dir, 'composer-quill-cache.json')
+  return join(stateDirectory(), 'composer-quill-cache.json')
 }
 
 let saveTimer = null
@@ -1035,7 +1037,7 @@ function scheduleCacheSave() {
         entries.push([key, entry])
       }
       const file = cacheFile()
-      const temp = `${file}.${process.pid}.tmp`
+      const temp = `${file}.${process.pid}.${(stateFileSeq += 1)}.tmp`
       // Writing is off the hot path, but a few hundred kilobytes of sync IO still
       // blocks every Session: hand it to the thread pool.
       void writeFileAsync(temp, JSON.stringify({ version: 1, entries: entries.slice(-CACHE_CAPACITY) }), 'utf8')
@@ -1164,11 +1166,33 @@ function emptyLedger() {
 
 const usageLedger = { file: null, data: emptyLedger(), session: new Map(), dirty: false }
 
+/**
+ * Where the four state files live. Re-resolved whenever the Host moves the environment:
+ * DSH_HOME can arrive after the plugin's first call, and a directory cached before that
+ * put the ledger in the home directory while the log went to ~/.dsh.
+ */
+let stateDir = null
+let stateDirEnv = null
+function stateDirectory() {
+  const env = `${process.env.DSH_PROFILE_DIR ?? ''}|${process.env.DSH_HOME ?? ''}`
+  if (stateDir !== null && stateDirEnv === env) return stateDir
+  stateDirEnv = env
+  stateDir = process.env.DSH_PROFILE_DIR ?? process.env.DSH_HOME ?? homedir() ?? tmpdir()
+  return stateDir
+}
+
 function usageLedgerPath() {
-  if (usageLedger.file !== null) return usageLedger.file
-  // Same directory as the log and the cache: the profile, never the checkout.
-  const dir = process.env.DSH_PROFILE_DIR ?? process.env.DSH_HOME ?? homedir() ?? tmpdir()
-  usageLedger.file = join(dir, 'composer-quill-usage.json')
+  const next = join(stateDirectory(), 'composer-quill-usage.json')
+  // The directory can move (see stateDirectory). Keep the file with it: a ledger left
+  // behind in the home directory is history the user can no longer see in the panel.
+  if (usageLedger.file !== null && usageLedger.file !== next) {
+    try {
+      if (existsSync(usageLedger.file) && !existsSync(next)) renameSync(usageLedger.file, next)
+    } catch {
+      // Best effort; a copy failure must not block the plugin.
+    }
+  }
+  usageLedger.file = next
   return usageLedger.file
 }
 
@@ -1253,7 +1277,7 @@ async function flushUsage() {
   if (usageLedger.dirty !== true) return false
   usageLedger.dirty = false
   const target = usageLedgerPath()
-  const temp = `${target}.${process.pid}.tmp`
+  const temp = `${target}.${process.pid}.${(stateFileSeq += 1)}.tmp`
   try {
     await writeFileAsync(temp, `${JSON.stringify(usageLedger.data, null, 2)}\n`)
     await renameAsync(temp, target)
@@ -1279,7 +1303,16 @@ async function loadUsage() {
     }
   } catch (error) {
     usageLedger.data = emptyLedger()
-    if (error?.code !== 'ENOENT') trace('usage-store-reset', { detail: String(error?.message ?? error).slice(0, 120) })
+    if (error?.code !== 'ENOENT') {
+      // Keep the file: zeroed counters are a lie, a renamed file is evidence.
+      const backup = `${target}.corrupt-${Date.now()}`
+      try {
+        await renameAsync(target, backup)
+      } catch {
+        // Already gone, or not ours to move.
+      }
+      trace('usage-store-reset', { backup: backup.slice(-24), detail: String(error?.message ?? error).slice(0, 120) })
+    }
   }
   return usageLedger.data
 }
@@ -1399,7 +1432,8 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
   // An empty reply used to look like "the model had nothing to say". Usually it means
   // the budget ran out before the first token, so record the cap alongside it.
   if (typeof text === 'string' && text.trim() === '' && finish?.kind !== 'error') {
-    trace('empty-reply', { mode, maxTokens: maxTokensFor(mode), finish: finish?.kind ?? null })
+    // The cap actually sent: with a thinking setting it differs from the base one.
+    trace('empty-reply', { mode, maxTokens: cap, finish: finish?.kind ?? null })
   }
   if (finish?.kind === 'error') {
     noteUsage({ mode, model: route?.model, usage: null, at: startedAt })
