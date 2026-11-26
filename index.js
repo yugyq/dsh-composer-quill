@@ -1728,7 +1728,13 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
     // result instead of paying for a second model call.
     const inFlight = composeInFlight.get(key)
     if (inFlight !== undefined) {
-      const shared = await withAbort(inFlight.catch((error) => error), signal)
+      inFlight.waiters += 1
+      let shared
+      try {
+        shared = await withAbort(inFlight.work.catch((error) => error), signal)
+      } finally {
+        leaveInFlight(key, inFlight)
+      }
       // A failed producer leaves the cache empty. Reporting that as "unchanged" told
       // the client to drop the suggestion with no reason and no retry; say what happened.
       if (shared instanceof Error) {
@@ -1750,20 +1756,31 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch, rou
       res.end()
       return
     }
-    // The shared work outlives any single request: the browser aborts its stream
-    // on every new keystroke, and tying the model call to that abort would kill
-    // the call for the other waiters (and discard a result that is nearly free
-    // to reuse). The producer gets its own deadline instead.
-    const workController = new AbortController()
-    const workTimer = setTimeout(() => workController.abort(cancelled()), REQUEST_TIMEOUT_MS)
+    // One model call, one waiter list. The browser aborts its stream on every new
+    // keystroke, so the call must survive one waiter leaving — but only while
+    // another waiter is still there to receive it. Waiting for nobody is spending
+    // for nothing: the key carries the draft and the epoch, so the next keystroke
+    // would not have reused the text anyway.
+    const entry = {
+      work: null,
+      controller: new AbortController(),
+      waiters: 1,
+      sessionId,
+      draftChars: cleanDraft.length,
+      settled: false,
+    }
+    const workTimer = setTimeout(() => entry.controller.abort(cancelled()), REQUEST_TIMEOUT_MS)
     workTimer.unref?.()
-    const work = produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, route: override, receivedAt, signal: workController.signal, progress })
-      .finally(() => clearTimeout(workTimer))
-    composeInFlight.set(key, work)
+    entry.work = produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, route: override, receivedAt, signal: entry.controller.signal, progress })
+      .finally(() => {
+        entry.settled = true
+        clearTimeout(workTimer)
+      })
+    composeInFlight.set(key, entry)
     try {
-      await withAbort(work, signal)
+      await withAbort(entry.work, signal)
     } finally {
-      composeInFlight.delete(key)
+      leaveInFlight(key, entry)
     }
     status = progress.painted || progress.delivered ? 'painted' : 'silent'
     res.end()
@@ -1827,6 +1844,20 @@ function replayCompose(send, hit, cleanDraft) {
 
 /** Requests that are already paying for a model call, keyed like the cache. */
 const composeInFlight = new Map()
+
+/**
+ * One waiter fewer. While somebody is still waiting the call keeps running; the
+ * last one out stops it, because an answer nobody is left to receive is just
+ * tokens being billed.
+ */
+function leaveInFlight(key, entry) {
+  entry.waiters -= 1
+  if (entry.waiters > 0) return
+  composeInFlight.delete(key)
+  if (entry.settled === true) return
+  trace('compose-abandoned', { sessionId: entry.sessionId, draftChars: entry.draftChars })
+  entry.controller.abort(cancelled())
+}
 
 /** Do the model work for one compose request and emit its frames. */
 /**

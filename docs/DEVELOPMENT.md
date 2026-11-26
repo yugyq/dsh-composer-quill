@@ -194,6 +194,7 @@ DSH_SCENARIO_LIMIT=14 python dev/verify_daily.py
 | `first-delta` | 首字到达，拆成 `queueMs`（请求进来到调模型）与 `modelMs`（调模型到首字）；`late: true` 表示这条请求早已收尾，首字属于仍在跑的模型调用，不能计入等待 |
 | `result` | 非流式（下一句）结果 |
 | `cancelled` | 请求被取消（客户端断开或新请求顶替） |
+| `compose-abandoned` | 最后一个等待者走了，模型调用被停掉，不再为一个没人接收的答案计费 |
 | `error` / `compose-stream-error` | 失败（含状态码与被遮蔽前的消息） |
 | `history` / `history-error` | 历史拉取 |
 | `not-live`（客户端上报） | 会话未在宿主加载 → 退避中 |

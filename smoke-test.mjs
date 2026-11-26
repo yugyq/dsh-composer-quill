@@ -3029,19 +3029,24 @@ group('host: stream telemetry')
   await checkAsync('work that outlives its request is marked late, not counted as wait', async () => {
     await withTempState(async (dir) => {
       const controller = new AbortController()
-      // The browser gives up on every keystroke; the model call keeps running on
-      // purpose. Its arrival must not later be read as "this request took long".
-      setTimeout(() => controller.abort(), 40)
-      await composeStream(
-        mkCtx(async function* () {
-          await new Promise((resolve) => setTimeout(resolve, 140))
-          yield { type: 'text-delta', text: '，先按时间顺序把三条要点列出来。' }
-          yield { type: 'finish', reason: { kind: 'stop' } }
-        }),
-        { sessionId: 's-trace', draft: '把这段日志按时间顺序整理成三条要点' },
-        mkRes(),
-        controller.signal,
-      )
+      const draft = '把这段日志按时间顺序整理成三条要点'
+      const ctx = mkCtx(async function* () {
+        await new Promise((resolve) => setTimeout(resolve, 140))
+        yield { type: 'text-delta', text: '，先按时间顺序把三条要点列出来。' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })
+      // The browser gives up on every keystroke. The call only keeps running
+      // because a second request is waiting on the same one; its arrival must not
+      // later be read as "this request took long".
+      const first = composeStream(ctx, { sessionId: 's-trace', draft }, mkRes(), controller.signal)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const keeperRes = mkRes()
+      const keeper = composeStream(ctx, { sessionId: 's-trace', draft }, keeperRes, new AbortController().signal)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      controller.abort()
+      await first
+      await keeper
+      assert.ok(keeperRes.frames().includes('三条要点'), 'the waiter that stayed got the answer')
       const ends = await readTrace(dir, 'stream-end')
       assert.equal(ends.length, 1)
       assert.equal(ends[0].status, 'cancelled')
@@ -3056,6 +3061,45 @@ group('host: stream telemetry')
       assert.equal(lates[0].path, 'main')
       assert.ok(lates[0].chars > 0)
       assert.equal(lates[0].finish, 'stop')
+    })
+  })
+
+  await checkAsync('a call nobody is left waiting for is stopped, not finished', async () => {
+    await withTempState(async (dir) => {
+      const state = { closed: false, finished: false, signal: null }
+      const ctx = {
+        get: () => undefined,
+        agents: { get: () => ({ session: { id: 's-trace', requestHeader: () => ({ config: { provider: 'p', model: 'trace-model' } }), snapshotEvents: () => [] } }) },
+        llm: {
+          async *stream(options) {
+            state.signal = options?.signal
+            try {
+              yield { type: 'text-delta', text: '先' }
+              await new Promise((resolve) => setTimeout(resolve, 120))
+              yield { type: 'text-delta', text: '看有没有 409。' }
+              yield { type: 'finish', reason: { kind: 'stop' } }
+              state.finished = true
+            } finally {
+              state.closed = true
+            }
+          },
+        },
+      }
+      const controller = new AbortController()
+      const run = composeStream(ctx, { sessionId: 's-trace', draft: '这条要精确到毫秒' }, mkRes(), controller.signal)
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      controller.abort()
+      await run
+      const rows = await readTrace(dir, 'compose-abandoned')
+      assert.equal(rows.length, 1, 'the abandonment is recorded')
+      assert.ok(rows[0].draftChars > 0)
+      await new Promise((resolve) => setTimeout(resolve, 160))
+      // Real rows: two calls kept generating 192 and 278 output tokens for a
+      // browser that had hung up 400-700 ms earlier, and nothing could reuse them
+      // because the key carries the draft and the epoch.
+      assert.equal(state.signal.aborted, true, 'the model call is abortable once nobody waits')
+      assert.equal(state.finished, false, 'the answer was never generated to the end')
+      assert.equal(state.closed, true, 'the stream was closed early')
     })
   })
 
