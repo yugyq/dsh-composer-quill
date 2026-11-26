@@ -2359,7 +2359,7 @@ const COVERED_DEBOUNCE_MS = 1200
     function useSessionBoundary(passed) {
       const {
         sessionId, running, nextEnabled, draftEmpty, settings, request, dismissAll, latest,
-        ghost, ghostLayer, sendDock, hydrateStored, bumpHistoryEpoch, refs,
+        ghost, ghostLayer, sendDock, hydrateStored, bumpHistoryEpoch, refs, stopTimer,
       } = passed
       const { previous, composing, hydratedFor, lastRequested, lastCall, retriedFor, notLive, learnedShown } = refs
         React.useEffect(() => {
@@ -2391,6 +2391,11 @@ const COVERED_DEBOUNCE_MS = 1200
             // model again would show "补写中…" for something already known.
             if (!running && sessionId !== null && nextEnabled && draftEmpty && settings.mode !== 'manual'
               && hydrateStored('next', '')) {
+              // A stored suggestion answers this Session, but the previous Session's
+              // request and debounce timer must still stop: their results would otherwise
+              // land on the composer that now shows a different conversation.
+              stopTimer()
+              ghost.cancel()
               ghostLayer.clear()
               return
             }
@@ -2625,7 +2630,7 @@ const COVERED_DEBOUNCE_MS = 1200
       // Turn boundary and Session switch drive the next-message prediction.
       useSessionBoundary({
         sessionId, running, nextEnabled, draftEmpty, settings, request, dismissAll, latest,
-        ghost, ghostLayer, sendDock, hydrateStored, bumpHistoryEpoch,
+        ghost, ghostLayer, sendDock, hydrateStored, bumpHistoryEpoch, stopTimer,
         refs: { previous, composing, hydratedFor, lastRequested, lastCall, retriedFor, notLive, learnedShown },
       })
 
