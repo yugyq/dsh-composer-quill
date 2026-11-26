@@ -1,15 +1,6 @@
 /**
- * Rebuild the usage ledger from the live log.
- *
- * The log records one `usage-call` line per model call (since 0.31.50), with the tokens
- * and the model. That is enough to reconstruct counts, tokens and cost — the cost is
- * recomputed at each call's own peak/off-peak price, exactly as the plugin books it.
- *
- * Only real model names count: the profile-directory log holds the test suite's own
- * output (models called `m`, `probe-model`, and so on), which must never enter a ledger.
- *
- *   node dev/rebuild-usage.mjs            # dry run, prints what it found
- *   node dev/rebuild-usage.mjs --write    # backs the current file up, then writes
+ * Same rebuild, but it writes to every ledger location the plugin would read, not just
+ * the one this shell resolves — a shell with DSH_PROFILE_DIR set is not the app.
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -17,21 +8,21 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const write = process.argv.includes('--write')
+const explicit = process.argv.find((arg) => arg.startsWith('--to='))
 const host = await import(pathToFileURL(path.resolve('index.js')).href)
-const { estimateCost, emptyUsage, usageLedgerPath } = host.__test
+const { estimateCost, emptyUsage, ledgerCandidates } = host.__test
 
 const logs = [
   path.join(os.homedir(), '.dsh', 'composer-quill.log'),
   path.join(os.homedir(), '.dsh', 'composer-quill.log.1'),
 ]
-
 const isRealModel = (model) => typeof model === 'string' && /^deepseek-(flash|v4)/.test(model)
+
 const buckets = new Map()
 const bucket = (key) => {
   if (!buckets.has(key)) buckets.set(key, { ...emptyUsage() })
   return buckets.get(key)
 }
-
 let counted = 0
 let skipped = 0
 const perDay = new Map()
@@ -83,29 +74,37 @@ for (const [key, value] of buckets) {
   if (key.startsWith('day:')) rebuilt.days[key.slice(4)] = value
 }
 
-const target = usageLedgerPath()
-let existing = null
-try {
-  existing = JSON.parse(fs.readFileSync(target, 'utf8'))
-} catch {
-  existing = null
-}
-
 console.log(`从日志读到 ${counted} 次真实调用，跳过 ${skipped} 条测试数据`)
 console.log('  按日期:', JSON.stringify(Object.fromEntries([...perDay.entries()].sort())))
 console.log(`  重建结果: calls=${rebuilt.lifetime.calls}  input=${rebuilt.lifetime.input}  cost≈$${(rebuilt.lifetime.costMicro / 1e6).toFixed(3)}`)
-console.log(`  现有账本: calls=${existing?.lifetime?.calls ?? 0}  (${target})`)
+
+const candidates = explicit ? [explicit.slice(5)] : ledgerCandidates()
+const targets = []
+for (const file of candidates) {
+  let calls = 0
+  try {
+    calls = JSON.parse(fs.readFileSync(file, 'utf8'))?.lifetime?.calls ?? 0
+  } catch {
+    calls = 0
+  }
+  console.log(`  ${fs.existsSync(file) ? '存在' : '不存在'}  calls=${String(calls).padStart(4)}  ${file}`)
+  if (fs.existsSync(file) || file === candidates[0]) targets.push({ file, calls })
+}
 
 if (!write) {
-  console.log('\n只做了试算。加 --write 才会写入（会先备份现有文件）。')
+  console.log('\n只做了试算。加 --write 才会写入（写入前会备份每个被改动的文件）。')
   process.exit(0)
 }
-if (existing !== null && (existing.lifetime?.calls ?? 0) >= rebuilt.lifetime.calls) {
-  console.log('\n现有账本不比重建结果小，保持不动。')
-  process.exit(0)
+
+let wrote = 0
+for (const { file, calls } of targets) {
+  if (calls >= rebuilt.lifetime.calls) {
+    console.log(`  跳过（现有不更小）: ${file}`)
+    continue
+  }
+  if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.before-rebuild-${Date.now()}`)
+  fs.writeFileSync(file, `${JSON.stringify(rebuilt, null, 2)}\n`)
+  console.log(`  已写入 ${file}`)
+  wrote += 1
 }
-const backup = `${target}.before-rebuild-${Date.now()}`
-if (fs.existsSync(target)) fs.copyFileSync(target, backup)
-fs.writeFileSync(target, `${JSON.stringify(rebuilt, null, 2)}\n`)
-console.log(`\n已写入 ${target}`)
-if (fs.existsSync(backup)) console.log('原文件备份为:', path.basename(backup))
+console.log(wrote === 0 ? '\n没有需要写入的文件。' : `\n写了 ${wrote} 个文件。重启 DSH 后面板才会读到新数字。`)
