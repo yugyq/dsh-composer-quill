@@ -245,6 +245,18 @@ async function main() {
     selection.addRange(range)
   }
 
+  /**
+   * The editor moved but the host has not caught up yet: that is the frame between
+   * a keystroke and the render that follows it. Nothing here re-renders the dock,
+   * so the props still describe the older draft.
+   */
+  function typeAhead(text) {
+    editor.textContent = text
+    caretToEnd()
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }))
+    return editor.textContent ?? ''
+  }
+
   /** One keystroke: DOM text, selection, input event, and the host re-render. */
   function key(char, inputType = 'insertText') {
     const before = editor.textContent ?? ''
@@ -315,6 +327,7 @@ async function main() {
 
   window.__harness = {
     type,
+    typeAhead,
     render,
     typeLive,
     key,

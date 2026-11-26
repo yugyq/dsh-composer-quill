@@ -281,6 +281,32 @@ def main() -> int:
         h("setComposeMode('ok')")
         h("setComposeTiming({first: 0, step: 220})")
 
+        # ---- S51c 采纳插入的就是屏幕上那截灰字
+        # Tab 按下的那一刻，编辑器可能已经比宿主状态新一帧。按旧草稿裁剪会把用户刚
+        # 打的字再插一遍；灰字为空时按 Tab 也不该插任何东西。
+        h("setComposeMode('echo')")
+        h("setComposeTiming({first: 0, step: 20})")
+        reset("")
+        base3 = "把失败原因也带上"
+        h(f"typeLive({json.dumps(base3)}, {{delay: 40}})")
+        page.wait_for_timeout(1200)
+        base3_tail = (h("snapshot()")["text"] or {}).get("text", "")
+        # 让下一次请求慢到不会在采纳前插话（2.5 秒）
+        h("setComposeTiming({first: 2500, step: 120})")
+        ahead = base3 + base3_tail[:1]
+        h(f"typeAhead({json.dumps(ahead)})")
+        h("accept()")
+        page.wait_for_timeout(200)
+        accepted = h("draft()")
+        wanted = base3 + base3_tail
+        record(
+            "S51c 采纳只插入屏幕上那截灰字",
+            bool(base3_tail) and accepted == wanted,
+            f"旧尾巴={base3_tail[:12]!r} 采纳后={accepted!r} 期望={wanted!r}",
+        )
+        h("setComposeMode('ok')")
+        h("setComposeTiming({first: 0, step: 220})")
+
         # ---- S6 请求失败一次：自动重试并恢复
         h("setComposeMode('fail-once')")
         reset("")
@@ -1278,7 +1304,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 61
+EXPECTED_SCENARIOS = 62
 
 
 if __name__ == "__main__":

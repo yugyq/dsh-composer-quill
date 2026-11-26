@@ -2838,6 +2838,16 @@ const COVERED_DEBOUNCE_MS = 1200
 
       const accept = React.useCallback(() => {
         const live = latest.current
+        // Accept inserts what the editor shows, trimmed at the moment of the keypress.
+        // A keystroke reaches the editor one frame before React sees it, so trimming
+        // against the draft this render was handed would put the character the user
+        // just typed on screen a second time.
+        const editorNow = (() => {
+          const editor = editorEl()
+          if (editor === null) return ''
+          return typeof editor.value === 'string' ? editor.value : (editor.textContent ?? '')
+        })()
+        const editorBase = editorNow === '' ? live.draft : editorNow.replace(/\s+$/, '')
         const insert = (text) => typeof inputActions?.insertText === 'function'
           && inputActions.insertText(text, inputActions.captureInsertion?.()) !== false
         const afterInsert = (applied, path) => {
@@ -2866,15 +2876,16 @@ const COVERED_DEBOUNCE_MS = 1200
         }
         if (!composeActive) {
           if (historyActive && historyMatch !== null) {
-            const chunk = historyMatch.tail
+            const chunk = followRemainder(`${live.draft}${historyMatch.tail}`, editorBase)
+            if (chunk === '') return false
             // The tail was measured against the end of the draft. With the caret parked
             // mid-sentence, inserting it would split the user's own words: replace the draft
             // with the whole suggestion instead.
             if (caretPlacement() === 'inside' && typeof inputActions?.setDraft === 'function') {
-              const whole = `${live.draft}${chunk}`
+              const whole = `${editorBase}${chunk}`
               return inputActions.setDraft(whole) !== false ? afterInsert(whole, 'setDraft') : false
             }
-            return insert(chunk) ? afterInsert(latest.current.draft + chunk, 'insert') : false
+            return insert(chunk) ? afterInsert(editorBase + chunk, 'insert') : false
           }
           return false
         }
@@ -2883,15 +2894,19 @@ const COVERED_DEBOUNCE_MS = 1200
           const done = typeof inputActions?.setDraft === 'function' && (inputActions.setDraft(proposal), true)
           return done ? afterInsert(proposal, 'setDraft') : false
         }
-        const chunk = proposal
+        // Tab inserts exactly what the ghost shows: the remainder measured against the
+        // editor text at this instant. When that is empty nothing is on screen, so
+        // nothing is inserted.
+        const chunk = followRemainder(current, editorBase)
+        if (chunk === '') return false
         // The tail was measured against the end of the draft. With the caret parked
         // mid-sentence, inserting it would split the user's own words: replace the draft
         // with the whole suggestion instead.
         if (caretPlacement() === 'inside' && typeof inputActions?.setDraft === 'function') {
-          const whole = `${live.draft}${chunk}`
+          const whole = `${editorBase}${chunk}`
           return inputActions.setDraft(whole) !== false ? afterInsert(whole, 'setDraft') : false
         }
-        return insert(chunk) ? afterInsert(latest.current.draft + chunk, 'insert') : false
+        return insert(chunk) ? afterInsert(editorBase + chunk, 'insert') : false
       }, [nextActive, composeActive, historyActive, historyMatch, proposal, proposalIsTail, current, inputActions, ghost, ghostLayer])
 
         const [undoOffer, setUndoOffer] = React.useState(null)
