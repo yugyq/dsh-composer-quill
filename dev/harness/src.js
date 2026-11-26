@@ -69,11 +69,16 @@ window.fetch = async (url, init) => {
     // 'long' returns a tail long enough to wrap past the composer box: that is the
     // shape that caught the ghost layer painting outside its editor.
     const longTail = '，并按时间顺序把每一步的耗时、失败原因和重试次数都列出来，最后给一个可以直接执行的修复步骤，再补一句风险说明；如果日志里还带着堆栈，就先把最外层调用和最先失败的那一帧标出来，其余可以折叠。'
+    // 'echo' makes the tail depend on the draft, so a scenario can tell the answer
+    // for this draft from the answer for the previous one — which is exactly what
+    // a prefill would blur together.
+    const echoTail = `，接着查「${Array.from(draft).slice(-4).join('')}」那几条 409。`
     const reply = typo
       ? 'REWRITE:\n帮我把这段日志整理一下，找出报错的那几行。'
       : unchanged ? ''
-        : composeMode === 'long' ? longTail
-        : '，找出报错的那几行。'
+        : composeMode === 'echo' ? echoTail
+          : composeMode === 'long' ? longTail
+            : '，找出报错的那几行。'
     const encoder = new TextEncoder()
     const frame = (event, data) => encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
     const pieces = []

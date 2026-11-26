@@ -216,6 +216,71 @@ def main() -> int:
         restored = proposal_of(h("snapshot()"))
         record("S50b 采纳一次后改写恢复", "采用改写" in restored, f"chip={restored[:24]!r}")
 
+        # ---- S51 等待期：只有草稿真的继续下去的那部分能留在屏幕上
+        # 预填（把上一轮的答案先画出来、等真答案到了再换）会把一句用户已经读到的话
+        # 在他眼前改写。实测同一草稿多打一个字，新答案在预填文本第 1 个字左右就分叉，
+        # 所以这条不变量必须钉住：屏幕上只允许出现「草稿 + 旧答案」仍然成立的那截，
+        # 任何按长度硬裁、按猜测补出来的文字都算回归。
+        h("setComposeMode('echo')")
+        h("setComposeTiming({first: 0, step: 20})")
+        reset("")
+        base_draft = "把消费面板按天汇总"
+        h(f"typeLive({json.dumps(base_draft)}, {{delay: 40}})")
+        page.wait_for_timeout(1200)
+        base_tail = (h("snapshot()")["text"] or {}).get("text", "")
+        # 把模型调慢，让「等待期」长到能被采样
+        h("setComposeTiming({first: 1500, step: 120})")
+        edited = base_draft + base_tail[:1]  # 用户顺着建议又打了一个字
+        h("rec.start(40)")
+        h(f"type({json.dumps(edited)})")
+        page.wait_for_timeout(600)
+        during = h("rec.stop()")
+        # 只判「编辑器里已经是新草稿」的那些采样：早于输入落地的采样画旧尾巴是对的。
+        seen = [s for s in during if s["draft"] == edited]
+        kept = {s["ghost"] for s in seen}
+        expected_new = "，接着查「" + edited[-4:] + "」那几条 409。"
+        settled_new = ""
+        for _ in range(45):
+            settled_new = (h("snapshot()")["text"] or {}).get("text", "")
+            if settled_new == expected_new:
+                break
+            page.wait_for_timeout(100)
+        record(
+            "S51 等待期只留草稿继续的那部分",
+            bool(base_tail) and bool(seen) and kept <= {"", base_tail[1:]} and settled_new == expected_new,
+            f"旧尾巴={base_tail[:14]!r} 采样={len(seen)} 条 灰字={sorted(kept)!r} 到达后={settled_new[:16]!r}",
+        )
+
+        # ---- S51b 草稿没继续旧答案：等待期一个字都不许画
+        h("setComposeTiming({first: 0, step: 20})")
+        reset("")
+        base2 = "把重试次数也统计进去"
+        h(f"typeLive({json.dumps(base2)}, {{delay: 40}})")
+        page.wait_for_timeout(1200)
+        base2_tail = (h("snapshot()")["text"] or {}).get("text", "")
+        h("setComposeTiming({first: 1500, step: 120})")
+        diverged = base2 + "★"  # 旧答案里没有这个字，草稿不再继续它
+        h("rec.start(40)")
+        h(f"type({json.dumps(diverged)})")
+        page.wait_for_timeout(600)
+        during2 = h("rec.stop()")
+        seen2 = [s for s in during2 if s["draft"] == diverged]
+        painted = {s["ghost"] for s in seen2}
+        expected2 = "，接着查「" + diverged[-4:] + "」那几条 409。"
+        settled2 = ""
+        for _ in range(45):
+            settled2 = (h("snapshot()")["text"] or {}).get("text", "")
+            if settled2 == expected2:
+                break
+            page.wait_for_timeout(100)
+        record(
+            "S51b 旧答案接不上时等待期不画任何字",
+            bool(base2_tail) and bool(seen2) and painted == {""} and settled2 == expected2,
+            f"旧尾巴={base2_tail[:14]!r} 采样={len(seen2)} 条 灰字={sorted(painted)!r} 到达后={settled2[:16]!r}",
+        )
+        h("setComposeMode('ok')")
+        h("setComposeTiming({first: 0, step: 220})")
+
         # ---- S6 请求失败一次：自动重试并恢复
         h("setComposeMode('fail-once')")
         reset("")
@@ -1213,7 +1278,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 59
+EXPECTED_SCENARIOS = 61
 
 
 if __name__ == "__main__":
