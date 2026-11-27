@@ -4,6 +4,29 @@
 
 ## 0.33.x
 
+### 0.33.3
+issue #11 报了两件事：Esc 清不掉残留的灰字，以及 Tab / Esc / Ctrl+Shift+Space 有时候整体失效。查下来是四处各自成立的缺口，前两处让「清掉」这件事根本没有发生，后两处让按键根本走不到插件。
+
+#### Esc 关的是「有什么可关」，不是「现在看得见什么」
+
+原来的按下 Esc 只看 `visible`：屏幕上此刻没有可见建议，就当没事发生，连 `preventDefault` 都不做。可残留灰字恰恰是上一个状态画上去的——那一刻 `visible` 是假的，按键于是谁也不管。现在 `closeOnEscape()` 把「还有残留」「还在等待/流式」也算进「有事可关」，任何一种成立都会拦住按键并走一次关闭。
+
+#### 一块画上去就再也不会动的层，不属于任何人
+
+`ghost.clear(sessionId)` 在 store 属于别的会话时直接返回，`ghostLayer.clear()` 只拆自己那块——被换掉的 dock 画下的层，两边都不认。现在 `dismissAll()` 在清完自己的之后调用 `ghostLayer.sweep()`，把文档里所有 `[data-composer-quill="layer"]` 一并拆掉；`mount()` 也会先扫掉别人的层，任何时刻只留一块。
+
+清扫只能由**活着的动作**发起。第一版把清扫塞进 `layer.clear()`，结果被换掉的旧图层「再画一次」时顺手删掉了新图层的节点——S55 立刻变红，这条规则就留在了 `mount()` 与 `dismissAll()` 里。
+
+#### 输入框不止一个的时候，找的是你正在打字的那个
+
+`editorEl()` 原来是 `document.querySelector('[data-composer-input]')`，永远第一个。焦点在第二个输入框里时，插件的 `inEditor(document.activeElement)` 判定失败，Tab / Esc / Ctrl+Shift+Space 全部静默失效。现在 `pickEditor(nodes, active)` 依次取「焦点所在的 composer → 第一个有布局的 → 列表第一个」，都没有才返回 `null`。
+
+#### 三条新场景（S56 / S57 / S58）
+
+S56 在没有可见建议时插入一块残影再按 Esc，要求残影为 0、图层不超过 1；S57 在流式中插入第二块层，要求「再画之后」只剩 1、两个 dock 同时画也只留最新的那块；S58 把焦点放进第二个输入框再按 Esc，要求按键被接住、图层清零。三条都做过变异：把 Esc 门控改回 `visible`、去掉 `dismissAll` 的 `sweep()`、把 `editorEl()` 退回 `querySelector`，各自只打红对应的一条。
+
+单测 187 → 189（`pickEditor` 的六种输入、`closeOnEscape` 的六种状态），浏览器场景 67 → 70。
+
 ### 0.33.2
 切会话的时候，旧会话正在路上的补全还在往新会话里写。issue #10 报的就是这个：Ctrl+N 之后，上一条建议的后半截会出现在新输入框里。
 
