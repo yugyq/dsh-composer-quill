@@ -186,6 +186,24 @@ const COVERED_DEBOUNCE_MS = 1200
       }
     }
 
+    /**
+     * What was asked, in one string: the draft plus the attachments it was asked
+     * with. A picture added to the same sentence is a different question, so every
+     * place that remembers "already asked for this draft" has to remember the
+     * attachments too. The separator cannot occur in a draft, so the two halves
+     * stay apart even when the fingerprint itself is empty.
+     */
+    function requestSignature(draft, attachmentKey) {
+      return `${typeof draft === 'string' ? draft : ''}\u0000${typeof attachmentKey === 'string' ? attachmentKey : ''}`
+    }
+
+    /** The attachment half of a signature, '' when nothing was attached or nothing was asked. */
+    function signatureAttachmentKey(signature) {
+      if (typeof signature !== 'string') return ''
+      const at = signature.indexOf('\u0000')
+      return at === -1 ? '' : signature.slice(at + 1)
+    }
+
     /** Read an SSE compose response, falling back to a whole JSON body. */
     /** Headers every request needs, so the two transports cannot drift apart. */
     function requestHeaders(accept) {

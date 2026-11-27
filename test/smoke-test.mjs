@@ -1218,6 +1218,29 @@ await checkAsync('a compose request carries the attachments, never their bytes',
   assert.equal(JSON.stringify(compose[0]).includes('base64'), false, 'the picture itself never goes through this route')
 })
 
+check('a draft and its attachments make one signature', () => {
+  const { requestSignature, signatureAttachmentKey } = moduleExports.__test
+  assert.equal(signatureAttachmentKey(requestSignature('你好', 'image:r1:1')), 'image:r1:1')
+  assert.equal(signatureAttachmentKey(requestSignature('你好', '')), '')
+  assert.equal(signatureAttachmentKey(requestSignature('', 'file:a.txt:3')), 'file:a.txt:3')
+  assert.equal(signatureAttachmentKey(null), '')
+  assert.notEqual(requestSignature('你好', ''), requestSignature('你好', 'image:r1:1'))
+})
+
+check('the attachment fingerprint changes when the picture does', () => {
+  const { key } = moduleExports.__test.attachmentPort(null)
+  const shot = [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1' }]
+  const same = [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1' }]
+  const moved = [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r2' }]
+  const file = [{ kind: 'file', name: 'notes.txt', bytes: 12, receiptId: '' }]
+  assert.equal(key(shot), 'image:r1:2048')
+  assert.equal(key(shot), key(same))
+  assert.notEqual(key(shot), key(moved))
+  assert.notEqual(key(shot), key(file))
+  assert.equal(key([]), '')
+  assert.equal(key(undefined), '')
+})
+
 await checkAsync('the dock renders one chip for the compose proposal', async () => {
   calls.length = 0
   effectQueue = []
@@ -2699,6 +2722,22 @@ group('client: gates')
       effects(base({ stored: { sessionId: 's1', kind: 'compose', forDraft: '我把这段', phase: 'loading', requested: '帮我把这段' } })),
       ['mark-last-call', 'report'],
     )
+  })
+
+  check('an attachment is part of the question the gate dedupes', () => {
+    const printed = 'image:r1:2048'
+    // Same sentence, new picture: neither the dedupe window nor a stored answer may
+    // swallow the call, because the model has not seen this picture yet.
+    assert.equal(gate(base({ attachmentKey: printed })), 'G7')
+    assert.equal(gate(base({ attachmentKey: printed, lastCall: { key: 'compose|帮我把这段日志', at: 9_700 } })), 'G7')
+    assert.equal(
+      gate(base({ attachmentKey: printed, stored: { sessionId: 's1', kind: 'compose', forDraft: '帮我把这段日志', phase: 'ready' } })),
+      'G7',
+    )
+    // Asking again with the same picture is still one question.
+    assert.equal(gate(base({ attachmentKey: printed, lastCall: { key: `compose|帮我把这段日志|${printed}`, at: 9_700 } })), 'G4a')
+    // A plain draft keeps the key it always had, so the no-attachment path is unchanged.
+    assert.equal(api.gateFor(base({})).key, 'compose|帮我把这段日志')
   })
 
   check('the dedupe gate asks to be rescheduled, not dropped', () => {

@@ -53,7 +53,10 @@
       // Described once per render, from the composer's own attachment list: the
       // request path must not read a store that may have moved on since.
       const attached = typeof attachments?.describe === 'function' ? attachments.describe(input) : []
-      latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, attachments: attached, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
+      // Attachments are part of the question, not decoration: swapping a picture
+      // must reach the same request path a keystroke does.
+      const attachmentKey = typeof attachments?.key === 'function' ? attachments.key(attached) : ''
+      latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, attachments: attached, attachmentKey, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
       const layer = React.useRef(null)
       if (layer.current === null) layer.current = createGhostLayer()
       const ghostLayer = layer.current
@@ -113,7 +116,7 @@
 
       // Typing drives the compose request (debounced on the settled draft).
       useTypingRequest({
-        draft, enabled, sessionId, running, settings, state, dockBooking, sendDock,
+        draft, enabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey,
         ghost, hydrateStored, report, request, composing, composeEnabled, refs: { lastRequested },
       })
 
@@ -234,7 +237,7 @@
           sendDock({ type: 'undismissed' })
           // Remember the draft the accept produced, so the safety net does not
           // immediately re-ask for the text that was just applied.
-          lastRequested.current = applied
+          lastRequested.current = requestSignature(applied, latest.current.attachmentKey)
           ghost.clear(live.sessionId ?? undefined)
           ghostLayer.clear()
           // Keep what it took to get here: the chip offers undo for a few seconds, and the

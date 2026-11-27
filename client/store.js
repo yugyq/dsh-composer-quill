@@ -33,7 +33,12 @@
       const force = input?.force === true
       // "||" not "??": an empty forDraft means "use whatever is in the composer now".
       const draftNow = mode === 'next' ? '' : (input?.forDraft || live.draft || '')
-      const key = mode + "|" + draftNow
+      // The attachments belong in the key: the same draft with a different picture is
+      // a different question, and every dedupe below compares keys.
+      const attachmentKey = typeof input?.attachmentKey === 'string' ? input.attachmentKey : ''
+      // Only appended when there is something to append: the key of a plain
+      // draft stays exactly what it always was.
+      const key = mode + "|" + draftNow + (attachmentKey === '' ? '' : "|" + attachmentKey)
       const effects = []
       const stop = (gate) => ({ verdict: 'stop', gate, draftNow, key, effects })
       const send = (gate) => ({ verdict: 'send', gate, draftNow, key, effects })
@@ -59,6 +64,7 @@
         }
         const stored = input?.stored ?? null
         if (mode === 'compose'
+          && attachmentKey === ''
           && stored !== null
           && stored.sessionId === live.sessionId
           && stored.kind === 'compose'

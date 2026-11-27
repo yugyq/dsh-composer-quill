@@ -210,6 +210,24 @@ const COVERED_DEBOUNCE_MS = 1200
       }
     }
 
+    /**
+     * What was asked, in one string: the draft plus the attachments it was asked
+     * with. A picture added to the same sentence is a different question, so every
+     * place that remembers "already asked for this draft" has to remember the
+     * attachments too. The separator cannot occur in a draft, so the two halves
+     * stay apart even when the fingerprint itself is empty.
+     */
+    function requestSignature(draft, attachmentKey) {
+      return `${typeof draft === 'string' ? draft : ''}\u0000${typeof attachmentKey === 'string' ? attachmentKey : ''}`
+    }
+
+    /** The attachment half of a signature, '' when nothing was attached or nothing was asked. */
+    function signatureAttachmentKey(signature) {
+      if (typeof signature !== 'string') return ''
+      const at = signature.indexOf('\u0000')
+      return at === -1 ? '' : signature.slice(at + 1)
+    }
+
     /** Read an SSE compose response, falling back to a whole JSON body. */
     /** Headers every request needs, so the two transports cannot drift apart. */
     function requestHeaders(accept) {
@@ -416,7 +434,15 @@ const COVERED_DEBOUNCE_MS = 1200
         return described
       }
       const probe = () => lastNote
-      return { describe, probe }
+      /**
+       * The same shape the Host stamps into its request trace, so a log line from
+       * either side reads identically. An unready attachment has no receipt: its
+       * name stands in, which still changes when a different file is picked.
+       */
+      const key = (described) => (Array.isArray(described) ? described : [])
+        .map((item) => `${item?.kind === 'image' ? 'image' : 'file'}:${item?.receiptId ? item.receiptId : (item?.name ?? '')}:${Number.isFinite(item?.bytes) ? item.bytes : 0}`)
+        .join(',')
+      return { describe, probe, key }
     }
 // --- store.js — concatenated into client.js by dev/tools/build-client.mjs ---
 
@@ -453,7 +479,12 @@ const COVERED_DEBOUNCE_MS = 1200
       const force = input?.force === true
       // "||" not "??": an empty forDraft means "use whatever is in the composer now".
       const draftNow = mode === 'next' ? '' : (input?.forDraft || live.draft || '')
-      const key = mode + "|" + draftNow
+      // The attachments belong in the key: the same draft with a different picture is
+      // a different question, and every dedupe below compares keys.
+      const attachmentKey = typeof input?.attachmentKey === 'string' ? input.attachmentKey : ''
+      // Only appended when there is something to append: the key of a plain
+      // draft stays exactly what it always was.
+      const key = mode + "|" + draftNow + (attachmentKey === '' ? '' : "|" + attachmentKey)
       const effects = []
       const stop = (gate) => ({ verdict: 'stop', gate, draftNow, key, effects })
       const send = (gate) => ({ verdict: 'send', gate, draftNow, key, effects })
@@ -479,6 +510,7 @@ const COVERED_DEBOUNCE_MS = 1200
         }
         const stored = input?.stored ?? null
         if (mode === 'compose'
+          && attachmentKey === ''
           && stored !== null
           && stored.sessionId === live.sessionId
           && stored.kind === 'compose'
@@ -2193,7 +2225,7 @@ const COVERED_DEBOUNCE_MS = 1200
           event.stopPropagation()
           // Claim this draft: leaving it null lets the 700 ms safety net
           // cancel and restart the request we just started.
-          lastRequested.current = live.draft
+          lastRequested.current = requestSignature(live.draft, live.attachmentKey)
           request('compose', live.draft)
           return
         }
@@ -2282,7 +2314,7 @@ const COVERED_DEBOUNCE_MS = 1200
       // Compose streams: deltas land as they arrive and are repainted once per frame,
       // so the ghost starts growing immediately. Split out of request().
       const composeStream = React.useCallback((live, draftNow) => {
-          lastRequested.current = draftNow
+          lastRequested.current = requestSignature(draftNow, live.attachmentKey)
           const active = ghost.streamStart(live.sessionId, 'compose', draftNow)
           let idle = null
           let buffer = ''
@@ -2456,6 +2488,7 @@ const COVERED_DEBOUNCE_MS = 1200
               requested: stored.requested,
             },
             dismissed: dockBooking.current.dismissed,
+            attachmentKey: live.attachmentKey ?? '',
           })
           const draftNow = verdict.draftNow
           for (const effect of verdict.effects) {
@@ -2537,7 +2570,7 @@ const COVERED_DEBOUNCE_MS = 1200
               report('retrigger-skipped', { sessionId: live.sessionId, draftLength: text.length, detail: 'claim' })
               return
             }
-            if (text === lastRequested.current) return
+            if (requestSignature(text, live.attachmentKey) === lastRequested.current) return
             if (dockBooking.current.dismissed === text) return
             const pending = ghost.getSnapshot()
             if (pending.phase !== 'idle' && pending.forDraft === text) return
@@ -2645,10 +2678,17 @@ const COVERED_DEBOUNCE_MS = 1200
     /** Typing drives the compose request: debounced on the settled draft. */
     function useTypingRequest(passed) {
       const {
-        draft, composeEnabled, sessionId, running, settings, state, dockBooking, sendDock,
+        draft, composeEnabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey,
         ghost, hydrateStored, report, request, composing, refs,
       } = passed
       const { lastRequested } = refs
+      // The draft alone is not the question: the same sentence with a picture
+      // attached asks something else. Every "already asked" test below uses this.
+      const signature = requestSignature(draft, attachmentKey)
+      // The attachments the request in flight was sent with. A different set means
+      // its answer was written without them, so it can no longer apply.
+      const askedKey = signatureAttachmentKey(lastRequested.current)
+      const sameAttachments = askedKey === (attachmentKey ?? '')
         React.useEffect(() => {
           if (draft.trim() !== '') sendDock({ type: 'typed' })
           if (!composeEnabled || sessionId === null || running || settings.mode === 'manual') return
@@ -2673,7 +2713,7 @@ const COVERED_DEBOUNCE_MS = 1200
           // Right after an accept the draft is exactly what was just applied: it was
           // already answered, so do not pay for another model call on it. Any other
           // text is a new draft and must be requested.
-          if (lastRequested.current === draft) return
+          if (lastRequested.current === signature) return
           if (dockBooking.current.switched !== null) {
             if (draft === dockBooking.current.switched) return
             sendDock({ type: 'switch-settled' })
@@ -2686,8 +2726,16 @@ const COVERED_DEBOUNCE_MS = 1200
           // alive: its tail still continues this text, and cancelling meant the user
           // saw no suggestion at all until they stopped typing.
           const inFlightFor = state.requested
-          const stillApplies = typeof inFlightFor === 'string' && inFlightFor !== '' && draft.startsWith(inFlightFor)
+          const stillApplies = sameAttachments
+            && typeof inFlightFor === 'string' && inFlightFor !== '' && draft.startsWith(inFlightFor)
           if (state.phase === 'loading' && inFlightFor !== null && inFlightFor !== draft && !stillApplies) ghost.cancel()
+          // Attachments changed after something was already asked: that answer was
+          // written without them, so drop it rather than show a guess. A settled
+          // reply has to leave the screen too — cancel() only stops a stream.
+          if (!sameAttachments && lastRequested.current !== null) {
+            ghost.cancel()
+            if (state.kind === 'compose') ghost.clear(sessionId)
+          }
             // Not claimed here: request() records the draft only when a call really
             // starts. Marking a suppressed draft as answered stalled the ghost — the
             // retrigger then skipped it forever.
@@ -2697,7 +2745,8 @@ const COVERED_DEBOUNCE_MS = 1200
           const storedText = stored.sessionId === sessionId && stored.kind === 'compose' && stored.items.length > 0
             ? stored.items[stored.index] ?? ''
             : ''
-          const covered = storedText !== ''
+          const covered = sameAttachments
+            && storedText !== ''
             && stored.forDraft !== draft
             && draft.replace(/\s+$/, '').startsWith(stored.forDraft.replace(/\s+$/, ''))
             && followRemainder(storedText, draft.replace(/\s+$/, '')) !== ''
@@ -2706,11 +2755,13 @@ const COVERED_DEBOUNCE_MS = 1200
             report('covered', { sessionId, draftLength: draft.length, detail: 'prefix-extension' })
           }
           if (!covered) sendDock({ type: 'not-covered' })
-          // A stored answer for this exact draft is better than a fresh call.
-          if (hydrateStored('compose', draft)) return
+          // A stored answer for this exact draft is better than a fresh call — but
+          // only when nothing is attached: suggestions saved earlier carry no
+          // attachment context, and replaying one would hide the picture again.
+          if (attachmentKey === '' && hydrateStored('compose', draft)) return
           request('compose', draft, false, covered ? COVERED_DEBOUNCE_MS : undefined)
           // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, [draft, composeEnabled, sessionId, running])
+        }, [draft, attachmentKey, composeEnabled, sessionId, running])
     }
 
     /** One diagnostic line at mount: which props arrived, and whether the Session exists. */
@@ -2792,7 +2843,10 @@ const COVERED_DEBOUNCE_MS = 1200
       // Described once per render, from the composer's own attachment list: the
       // request path must not read a store that may have moved on since.
       const attached = typeof attachments?.describe === 'function' ? attachments.describe(input) : []
-      latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, attachments: attached, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
+      // Attachments are part of the question, not decoration: swapping a picture
+      // must reach the same request path a keystroke does.
+      const attachmentKey = typeof attachments?.key === 'function' ? attachments.key(attached) : ''
+      latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, attachments: attached, attachmentKey, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
       const layer = React.useRef(null)
       if (layer.current === null) layer.current = createGhostLayer()
       const ghostLayer = layer.current
@@ -2852,7 +2906,7 @@ const COVERED_DEBOUNCE_MS = 1200
 
       // Typing drives the compose request (debounced on the settled draft).
       useTypingRequest({
-        draft, enabled, sessionId, running, settings, state, dockBooking, sendDock,
+        draft, enabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey,
         ghost, hydrateStored, report, request, composing, composeEnabled, refs: { lastRequested },
       })
 
@@ -2973,7 +3027,7 @@ const COVERED_DEBOUNCE_MS = 1200
           sendDock({ type: 'undismissed' })
           // Remember the draft the accept produced, so the safety net does not
           // immediately re-ask for the text that was just applied.
-          lastRequested.current = applied
+          lastRequested.current = requestSignature(applied, latest.current.attachmentKey)
           ghost.clear(live.sessionId ?? undefined)
           ghostLayer.clear()
           // Keep what it took to get here: the chip offers undo for a few seconds, and the
@@ -3610,6 +3664,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { attachmentPort, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

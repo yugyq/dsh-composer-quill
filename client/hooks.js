@@ -373,7 +373,7 @@
           event.stopPropagation()
           // Claim this draft: leaving it null lets the 700 ms safety net
           // cancel and restart the request we just started.
-          lastRequested.current = live.draft
+          lastRequested.current = requestSignature(live.draft, live.attachmentKey)
           request('compose', live.draft)
           return
         }
@@ -462,7 +462,7 @@
       // Compose streams: deltas land as they arrive and are repainted once per frame,
       // so the ghost starts growing immediately. Split out of request().
       const composeStream = React.useCallback((live, draftNow) => {
-          lastRequested.current = draftNow
+          lastRequested.current = requestSignature(draftNow, live.attachmentKey)
           const active = ghost.streamStart(live.sessionId, 'compose', draftNow)
           let idle = null
           let buffer = ''
@@ -636,6 +636,7 @@
               requested: stored.requested,
             },
             dismissed: dockBooking.current.dismissed,
+            attachmentKey: live.attachmentKey ?? '',
           })
           const draftNow = verdict.draftNow
           for (const effect of verdict.effects) {
@@ -717,7 +718,7 @@
               report('retrigger-skipped', { sessionId: live.sessionId, draftLength: text.length, detail: 'claim' })
               return
             }
-            if (text === lastRequested.current) return
+            if (requestSignature(text, live.attachmentKey) === lastRequested.current) return
             if (dockBooking.current.dismissed === text) return
             const pending = ghost.getSnapshot()
             if (pending.phase !== 'idle' && pending.forDraft === text) return
@@ -825,10 +826,17 @@
     /** Typing drives the compose request: debounced on the settled draft. */
     function useTypingRequest(passed) {
       const {
-        draft, composeEnabled, sessionId, running, settings, state, dockBooking, sendDock,
+        draft, composeEnabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey,
         ghost, hydrateStored, report, request, composing, refs,
       } = passed
       const { lastRequested } = refs
+      // The draft alone is not the question: the same sentence with a picture
+      // attached asks something else. Every "already asked" test below uses this.
+      const signature = requestSignature(draft, attachmentKey)
+      // The attachments the request in flight was sent with. A different set means
+      // its answer was written without them, so it can no longer apply.
+      const askedKey = signatureAttachmentKey(lastRequested.current)
+      const sameAttachments = askedKey === (attachmentKey ?? '')
         React.useEffect(() => {
           if (draft.trim() !== '') sendDock({ type: 'typed' })
           if (!composeEnabled || sessionId === null || running || settings.mode === 'manual') return
@@ -853,7 +861,7 @@
           // Right after an accept the draft is exactly what was just applied: it was
           // already answered, so do not pay for another model call on it. Any other
           // text is a new draft and must be requested.
-          if (lastRequested.current === draft) return
+          if (lastRequested.current === signature) return
           if (dockBooking.current.switched !== null) {
             if (draft === dockBooking.current.switched) return
             sendDock({ type: 'switch-settled' })
@@ -866,8 +874,16 @@
           // alive: its tail still continues this text, and cancelling meant the user
           // saw no suggestion at all until they stopped typing.
           const inFlightFor = state.requested
-          const stillApplies = typeof inFlightFor === 'string' && inFlightFor !== '' && draft.startsWith(inFlightFor)
+          const stillApplies = sameAttachments
+            && typeof inFlightFor === 'string' && inFlightFor !== '' && draft.startsWith(inFlightFor)
           if (state.phase === 'loading' && inFlightFor !== null && inFlightFor !== draft && !stillApplies) ghost.cancel()
+          // Attachments changed after something was already asked: that answer was
+          // written without them, so drop it rather than show a guess. A settled
+          // reply has to leave the screen too — cancel() only stops a stream.
+          if (!sameAttachments && lastRequested.current !== null) {
+            ghost.cancel()
+            if (state.kind === 'compose') ghost.clear(sessionId)
+          }
             // Not claimed here: request() records the draft only when a call really
             // starts. Marking a suppressed draft as answered stalled the ghost — the
             // retrigger then skipped it forever.
@@ -877,7 +893,8 @@
           const storedText = stored.sessionId === sessionId && stored.kind === 'compose' && stored.items.length > 0
             ? stored.items[stored.index] ?? ''
             : ''
-          const covered = storedText !== ''
+          const covered = sameAttachments
+            && storedText !== ''
             && stored.forDraft !== draft
             && draft.replace(/\s+$/, '').startsWith(stored.forDraft.replace(/\s+$/, ''))
             && followRemainder(storedText, draft.replace(/\s+$/, '')) !== ''
@@ -886,11 +903,13 @@
             report('covered', { sessionId, draftLength: draft.length, detail: 'prefix-extension' })
           }
           if (!covered) sendDock({ type: 'not-covered' })
-          // A stored answer for this exact draft is better than a fresh call.
-          if (hydrateStored('compose', draft)) return
+          // A stored answer for this exact draft is better than a fresh call — but
+          // only when nothing is attached: suggestions saved earlier carry no
+          // attachment context, and replaying one would hide the picture again.
+          if (attachmentKey === '' && hydrateStored('compose', draft)) return
           request('compose', draft, false, covered ? COVERED_DEBOUNCE_MS : undefined)
           // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, [draft, composeEnabled, sessionId, running])
+        }, [draft, attachmentKey, composeEnabled, sessionId, running])
     }
 
     /** One diagnostic line at mount: which props arrived, and whether the Session exists. */

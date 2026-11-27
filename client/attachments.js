@@ -67,5 +67,13 @@
         return described
       }
       const probe = () => lastNote
-      return { describe, probe }
+      /**
+       * The same shape the Host stamps into its request trace, so a log line from
+       * either side reads identically. An unready attachment has no receipt: its
+       * name stands in, which still changes when a different file is picked.
+       */
+      const key = (described) => (Array.isArray(described) ? described : [])
+        .map((item) => `${item?.kind === 'image' ? 'image' : 'file'}:${item?.receiptId ? item.receiptId : (item?.name ?? '')}:${Number.isFinite(item?.bytes) ? item.bytes : 0}`)
+        .join(',')
+      return { describe, probe, key }
     }
