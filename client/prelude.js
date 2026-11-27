@@ -3,7 +3,7 @@
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.33.2'
+    const BUILD = '0.33.3'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -247,6 +247,33 @@ const COVERED_DEBOUNCE_MS = 1200
      * true — the first sentence of the old Session then appeared in the new one
      * (issue #10). The candidates belong to whoever asked for them.
      */
+    /**
+     * Whether Escape has anything to do.
+     *
+     * It used to be `if (visible)`, and `visible` is computed from the current state:
+     * a ghost painted by the previous state stays on screen while nothing is
+     * visible any more, and Esc then returned without even preventing the default —
+     * the key looked broken. A painted layer, or work in flight, is also something
+     * to close.
+     */
+    function closeOnEscape(input) {
+      const live = input ?? {}
+      if (live.visible === true) return true
+      if (live.residue === true) return true
+      const phase = typeof live.phase === 'string' ? live.phase : 'idle'
+      return phase === 'loading' || phase === 'streaming'
+    }
+
+    /** How many layers the document holds, and for whom: two is never correct. */
+    function layerStats() {
+      if (typeof document?.querySelectorAll !== 'function') return { layers: null, sessions: [] }
+      const nodes = Array.from(document.querySelectorAll('[data-composer-quill="layer"]'))
+      return {
+        layers: nodes.length,
+        sessions: nodes.map((node) => (typeof node.getAttribute === 'function' ? node.getAttribute('data-session') : null)),
+      }
+    }
+
     function nextVisible(input) {
       const live = input ?? {}
       if (live.nextEnabled === false || live.running === true) return false

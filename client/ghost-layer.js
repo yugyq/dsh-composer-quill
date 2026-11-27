@@ -200,6 +200,17 @@
         return true
       }
 
+      // Only one layer may exist in the document: two docks on the same composer
+      // each draw their own, and the one that mounted first leaves its node behind.
+      // Mount was the only sweep, so a dock that never mounted again left a ghost
+      // nothing could remove — not Esc, not a Session switch.
+      const sweepOthers = () => {
+        if (typeof document.querySelectorAll !== 'function') return
+        for (const node of document.querySelectorAll('[data-composer-quill="layer"]')) {
+          if (node !== host) node.remove()
+        }
+      }
+
       const clear = () => {
         if (positionedParent !== null) {
           positionedParent.style.position = ''
@@ -226,7 +237,7 @@
         // Session's suggestion into the field the user is typing in.
         // A previous mount can survive a body re-render as a detached node, and a
         // second dock instance would draw a second ghost: start clean.
-        for (const stale of document.querySelectorAll('[data-composer-quill="layer"]')) stale.remove()
+        sweepOthers()
         target = editor
         host = document.createElement('div')
         host.setAttribute('data-composer-quill', 'layer')
@@ -334,6 +345,15 @@
         layoutBox()
       }
 
-      return { render, clear, isMounted: () => host !== null && host.isConnected, debug }
+      /** Remove every layer in the document, including ones this instance never made. */
+      const sweep = () => {
+        if (typeof document.querySelectorAll !== 'function') return
+        for (const node of document.querySelectorAll('[data-composer-quill="layer"]')) node.remove()
+        host = null
+        textEl = null
+        target = null
+      }
+
+      return { render, clear, sweep, isMounted: () => host !== null && host.isConnected, debug }
     }
 

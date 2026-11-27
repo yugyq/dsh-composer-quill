@@ -154,6 +154,7 @@
             historyItems: input.history.items.length,
             draftEmpty: input.draftEmpty,
             sameSession: input.state.sessionId === input.sessionId,
+            layers: layerStats().layers,
             enabled: input.enabled,
           }),
         })
@@ -289,7 +290,13 @@
             sessionId: data.sessionId,
             draftLength: data.draftLength,
             // The proposal is the user's own text; a length cannot leak a draft.
-            detail: JSON.stringify({ anchor, proposalChars: String(data.proposal).length, ...ghostLayer.debug() }),
+            detail: JSON.stringify({
+              anchor,
+              proposalChars: String(data.proposal).length,
+              layers: layerStats().layers,
+              layerSessions: layerStats().sessions.join(','),
+              ...ghostLayer.debug(),
+            }),
           })
         }
       }
@@ -382,10 +389,13 @@
         }
         if (event.key === 'Enter') { dismissAll(); return }
         if (event.key === 'Escape') {
-          if (visible) {
+          const residue = typeof document.querySelector === 'function'
+            && document.querySelector('[data-composer-quill="layer"]') !== null
+          const phase = typeof ghost.getSnapshot === 'function' ? ghost.getSnapshot().phase : 'idle'
+          if (closeOnEscape({ visible, residue, phase })) {
             event.preventDefault()
             event.stopPropagation()
-            if (latest.current.draft.trim() !== '') sendDock({ type: 'dismissed', draft: latest.current.draft })
+            if (visible && latest.current.draft.trim() !== '') sendDock({ type: 'dismissed', draft: latest.current.draft })
             dismissAll()
           }
           return

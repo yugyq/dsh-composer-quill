@@ -1371,6 +1371,29 @@ check('the page token outlives a reload', () => {
   }
 })
 
+check('the plugin speaks for the composer the user is typing in', () => {
+  const { pickEditor } = moduleExports.__test
+  const laid = { id: 'laid', getBoundingClientRect: () => ({ width: 100, height: 20 }) }
+  const flat = { id: 'flat', getBoundingClientRect: () => ({ width: 0, height: 0 }) }
+  const active = { closest: () => laid }
+  assert.equal(pickEditor([laid, flat], active), laid, 'the focused composer wins')
+  assert.equal(pickEditor([flat, laid], null), laid, 'without focus, the one that is laid out wins')
+  assert.equal(pickEditor([flat], null), flat, 'a lonely composer is used even before it has layout')
+  assert.equal(pickEditor([], null), null, 'no composers at all')
+  assert.equal(pickEditor(null, null), null, 'nothing to look at')
+  assert.equal(pickEditor([laid], { closest: () => ({ id: 'elsewhere' }) }), laid, 'focus outside every composer')
+})
+
+check('Escape has something to close even when nothing is visible', () => {
+  const { closeOnEscape } = moduleExports.__test
+  assert.equal(closeOnEscape({ visible: true }), true, 'a suggestion on screen')
+  assert.equal(closeOnEscape({ visible: false, residue: true }), true, 'a ghost nobody owns any more')
+  assert.equal(closeOnEscape({ visible: false, residue: false, phase: 'streaming' }), true, 'a stream still arriving')
+  assert.equal(closeOnEscape({ visible: false, residue: false, phase: 'loading' }), true, 'a request in flight')
+  assert.equal(closeOnEscape({ visible: false, residue: false, phase: 'idle' }), false, 'nothing to close')
+  assert.equal(closeOnEscape(undefined), false, 'no state at all')
+})
+
 check('a draft and its attachments make one signature', () => {
   const { requestSignature, signatureAttachmentKey } = moduleExports.__test
   assert.equal(signatureAttachmentKey(requestSignature('你好', 'image:r1:1')), 'image:r1:1')

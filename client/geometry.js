@@ -56,7 +56,37 @@
       return best
     }
 
-    const editorEl = () => document.querySelector('[data-composer-input]')
+    /**
+     * Which composer this plugin speaks for.
+     *
+     * `querySelector` returns the first one in the document, and a Session switch
+     * briefly leaves two of them: the one being torn down and the one the user is
+     * typing in. Picking the first meant every keystroke handler looked at the wrong
+     * field and gave up — Tab moved focus, Esc did nothing. The focused composer
+     * wins; without focus, the first one that is actually laid out.
+     */
+    const pickEditor = (nodes, active) => {
+      const list = Array.isArray(nodes) ? nodes.filter((node) => node !== null && node !== undefined) : []
+      if (list.length === 0) return null
+      const owner = typeof active?.closest === 'function' ? active.closest('[data-composer-input]') : null
+      if (owner !== null && list.includes(owner)) return owner
+      for (const node of list) {
+        try {
+          const rect = node.getBoundingClientRect()
+          if (rect.width > 0 && rect.height > 0) return node
+        } catch {
+          // A node without layout cannot be the one being typed in.
+        }
+      }
+      return list[0]
+    }
+
+    const editorEl = () => {
+      if (typeof document.querySelectorAll !== 'function') return document.querySelector('[data-composer-input]')
+      const nodes = Array.from(document.querySelectorAll('[data-composer-input]'))
+      if (nodes.length === 0) return null
+      return pickEditor(nodes, document.activeElement)
+    }
 
     /** Draft text read straight from the composer, independent of prop updates. */
     /**

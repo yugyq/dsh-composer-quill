@@ -94,6 +94,9 @@
         ghost.cancel()
         ghost.clear(sessionId ?? undefined)
         ghostLayer.clear()
+        // The store only clears its own Session, and a layer from a dock that never
+        // mounts again belongs to nobody: Esc has to take the screen back anyway.
+        if (typeof ghostLayer.sweep === 'function') ghostLayer.sweep()
       }, [stopTimer, ghost, ghostLayer, sessionId])
 
       /**

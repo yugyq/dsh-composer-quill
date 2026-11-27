@@ -1423,6 +1423,90 @@ def main() -> int:
             page.wait_for_timeout(200)
         h("type('')")
 
+        # ---- S56 没有可见建议时，Esc 也要清掉残留灰字（issue #11）
+        # 上一版只在 `visible` 为真时才接住 Esc：灰字是上一个状态画上去的，此刻
+        # 屏幕上没有可展示的建议，按键就什么都不做 —— 用户看到的是「Esc 关不掉」。
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_function("() => window.__harnessReady === true")
+        page.wait_for_timeout(1200)
+        h("setComposeMode('unchanged')")
+        h("press({key: 'Shift'})")
+        h("typeLive('把这段构建日志按时间顺序排一下', {delay: 20})")
+        page.wait_for_timeout(900)
+        s56_snap = h("snapshot()")
+        s56_visible = bool(s56_snap.get("proposal") or {})
+        s56_before = h("orphanLayer('上一版的残影')")
+        s56_orphan_before = h("orphanCount()")
+        h("press({key: 'Escape'})")
+        page.wait_for_timeout(150)
+        s56_orphan_after = h("orphanCount()")
+        s56_layers = h("layerCount()")
+        h("setComposeMode('ok')")
+        # Esc on an empty composer clears the store completely; the next scenario has
+        # to start from a served document, or it inherits "nothing is loaded yet".
+        page.evaluate("() => { try { localStorage.clear() } catch {} }")
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_function("() => window.__harnessReady === true")
+        page.wait_for_timeout(600)
+        record(
+            "S56 没有可见建议时 Esc 也要清掉残留灰字",
+            s56_visible is False and s56_orphan_before == 1 and s56_orphan_after == 0 and s56_layers <= 1,
+            f"可见={s56_visible} 插入前={s56_before} 残影={s56_orphan_before} 按 Esc 后残影={s56_orphan_after} 图层={s56_layers}",
+        )
+        reset("")
+
+        # ---- S57 同一块输入框上永远只有一块灰字（issue #11）
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_function("() => window.__harnessReady === true")
+        h("setComposeMode('long')")
+        h("setComposeTiming({first: 150, step: 400})")
+        h("press({key: 'Shift'})")
+        h("typeLive('把这段访问日志按时间顺序排一下', {delay: 20})")
+        page.wait_for_timeout(900)
+        s57_mid = h("layerCount()")
+        s57_inserted = h("orphanLayer('另一块残影')")
+        page.wait_for_timeout(1200)
+        s57_after = h("layerCount()")
+        s57_duel = h("layerDuel('A', 'B')")
+        h("setComposeMode('ok')")
+        h("setComposeTiming({first: 0, step: 220})")
+        record(
+            "S57 同一块输入框上永远只有一块灰字",
+            s57_mid >= 1 and s57_inserted >= 2 and s57_after <= 1 and s57_duel.get("layers") == 1,
+            f"流中={s57_mid} 插入后={s57_inserted} 再画之后={s57_after} 两个 dock 同时画={s57_duel.get('layers')} 留下={s57_duel.get('winner')!r}",
+        )
+        reset("")
+
+        # ---- S58 焦点在另一个输入框里，快捷键仍然有效（issue #11）
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_function("() => window.__harnessReady === true")
+        s58_focused = h("secondComposer('第二个输入框')")
+        s58_uses = h("layerUsesFocused()")
+        s58_orphan = h("orphanLayer('第二个输入框的残影')")
+        h("pressFocused({key: 'Escape'})")
+        page.wait_for_timeout(150)
+        s58_layers = h("layerCount()")
+        record(
+            "S58 焦点在另一个输入框里 Esc 仍然被接住",
+            s58_focused is True and s58_orphan >= 1 and s58_layers == 0,
+            f"焦点落下={s58_focused} 残影={s58_orphan} Escape 后图层={s58_layers}",
+        )
+        _ = s58_uses
+        # Hand the screen back: the second composer was never a real draft, and the
+        # safety net reads the focused composer. Leaving it focused with text made
+        # the next scenario look like it had a draft (S48 caught that).
+        page.evaluate("() => { try { localStorage.clear() } catch {} }")
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_function("() => window.__harnessReady === true")
+        page.wait_for_timeout(600)
+        h("setSession('s-harness')")
+        reset("")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
 
@@ -1437,7 +1521,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 67
+EXPECTED_SCENARIOS = 70
 
 
 if __name__ == "__main__":

@@ -302,6 +302,13 @@ async function main() {
     target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))
   }
 
+  /** Press a key wherever the user's focus actually is, without stealing it first. */
+  function pressFocused(init) {
+    const target = document.activeElement ?? document.body
+    target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))
+    return target === editor
+  }
+
   const rec = {
     samples: [],
     timer: null,
@@ -363,6 +370,76 @@ async function main() {
         freshMounted: fresh.isMounted(),
       }
     },
+    /** A layer nobody owns any more: the state that used to be impossible to close. */
+    orphanLayer(text) {
+      const node = document.createElement('div')
+      node.setAttribute('data-composer-quill', 'layer')
+      node.setAttribute('data-session', 's-orphan')
+      const inner = document.createElement('div')
+      inner.setAttribute('data-composer-quill', 'text')
+      inner.textContent = text
+      node.appendChild(inner)
+      editor.appendChild(node)
+      return document.querySelectorAll('[data-composer-quill="layer"]').length
+    },
+    layerCount() {
+      return document.querySelectorAll('[data-composer-quill="layer"]').length
+    },
+    /**
+     * Two docks alive at once — the shape that drew two ghosts. The second one paints
+     * last, then the first paints again: whoever paints last must own the screen.
+     */
+    layerDuel(first = 'A', second = 'B') {
+      const make = mod.__test?.createGhostLayer
+      if (typeof make !== 'function') return { made: false, layers: -1, winner: '' }
+      const a = make('duel-a')
+      const b = make('duel-b')
+      a.render({ inlineText: first, anchor: 'box' })
+      b.render({ inlineText: second, anchor: 'box' })
+      a.render({ inlineText: `${first}2`, anchor: 'box' })
+      const layers = document.querySelectorAll('[data-composer-quill="layer"]').length
+      const winner = document.querySelector('[data-composer-quill="layer"] [data-composer-quill="text"]')?.textContent ?? ''
+      a.clear()
+      b.clear()
+      for (const node of document.querySelectorAll('[data-composer-quill="layer"]')) node.remove()
+      return { made: true, layers, winner }
+    },
+    orphanCount() {
+      return document.querySelectorAll('[data-composer-quill="layer"][data-session="s-orphan"]').length
+    },
+    /** Two composers in the document, focus in the second: the shape that killed shortcuts. */
+    secondComposer(text) {
+      let node = document.getElementById('second-composer')
+      if (node === null) {
+        node = document.createElement('div')
+        node.id = 'second-composer'
+        node.setAttribute('data-composer-input', '')
+        node.setAttribute('contenteditable', 'true')
+        document.body.appendChild(node)
+      }
+      node.textContent = text
+      node.focus()
+      return document.activeElement === node
+    },
+    /** Does a fresh layer land inside the composer that has focus? */
+    layerUsesFocused() {
+      const make = mod.__test?.createGhostLayer
+      const second = document.getElementById('second-composer')
+      if (typeof make !== 'function' || second === null) return { ok: false, why: 'missing' }
+      const layer = make('focus-test')
+      layer.render({ inlineText: '焦点在哪就画在哪', anchor: 'box' })
+      const node = document.querySelector('[data-session="focus-test"]')
+      // The layer is an overlay: it lives on <body> and positions itself over the
+      // composer it belongs to. "Follows the focused composer" therefore means
+      // "lands on the focused composer's rectangle", not "is a child of it".
+      const a = node?.getBoundingClientRect?.() ?? null
+      const b = second.getBoundingClientRect()
+      const inside = a !== null && Math.abs(a.left - b.left) < 8 && Math.abs(a.top - b.top) < 8
+      const why = a === null ? 'no-layer' : `layer=${Math.round(a.left)},${Math.round(a.top)} second=${Math.round(b.left)},${Math.round(b.top)}`
+      layer.clear()
+      if (node !== null) node.remove()
+      return { ok: inside, why }
+    },
     type,
     typeAhead,
     /** Put text in the DOM without telling the host, then press Tab. */
@@ -384,6 +461,7 @@ async function main() {
     typeLive,
     key,
     press,
+    pressFocused,
     rec,
     calls,
     draft: () => editor.textContent ?? '',

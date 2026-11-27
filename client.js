@@ -27,7 +27,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.33.2'
+    const BUILD = '0.33.3'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -271,6 +271,33 @@ const COVERED_DEBOUNCE_MS = 1200
      * true — the first sentence of the old Session then appeared in the new one
      * (issue #10). The candidates belong to whoever asked for them.
      */
+    /**
+     * Whether Escape has anything to do.
+     *
+     * It used to be `if (visible)`, and `visible` is computed from the current state:
+     * a ghost painted by the previous state stays on screen while nothing is
+     * visible any more, and Esc then returned without even preventing the default —
+     * the key looked broken. A painted layer, or work in flight, is also something
+     * to close.
+     */
+    function closeOnEscape(input) {
+      const live = input ?? {}
+      if (live.visible === true) return true
+      if (live.residue === true) return true
+      const phase = typeof live.phase === 'string' ? live.phase : 'idle'
+      return phase === 'loading' || phase === 'streaming'
+    }
+
+    /** How many layers the document holds, and for whom: two is never correct. */
+    function layerStats() {
+      if (typeof document?.querySelectorAll !== 'function') return { layers: null, sessions: [] }
+      const nodes = Array.from(document.querySelectorAll('[data-composer-quill="layer"]'))
+      return {
+        layers: nodes.length,
+        sessions: nodes.map((node) => (typeof node.getAttribute === 'function' ? node.getAttribute('data-session') : null)),
+      }
+    }
+
     function nextVisible(input) {
       const live = input ?? {}
       if (live.nextEnabled === false || live.running === true) return false
@@ -1506,7 +1533,37 @@ const COVERED_DEBOUNCE_MS = 1200
       return best
     }
 
-    const editorEl = () => document.querySelector('[data-composer-input]')
+    /**
+     * Which composer this plugin speaks for.
+     *
+     * `querySelector` returns the first one in the document, and a Session switch
+     * briefly leaves two of them: the one being torn down and the one the user is
+     * typing in. Picking the first meant every keystroke handler looked at the wrong
+     * field and gave up — Tab moved focus, Esc did nothing. The focused composer
+     * wins; without focus, the first one that is actually laid out.
+     */
+    const pickEditor = (nodes, active) => {
+      const list = Array.isArray(nodes) ? nodes.filter((node) => node !== null && node !== undefined) : []
+      if (list.length === 0) return null
+      const owner = typeof active?.closest === 'function' ? active.closest('[data-composer-input]') : null
+      if (owner !== null && list.includes(owner)) return owner
+      for (const node of list) {
+        try {
+          const rect = node.getBoundingClientRect()
+          if (rect.width > 0 && rect.height > 0) return node
+        } catch {
+          // A node without layout cannot be the one being typed in.
+        }
+      }
+      return list[0]
+    }
+
+    const editorEl = () => {
+      if (typeof document.querySelectorAll !== 'function') return document.querySelector('[data-composer-input]')
+      const nodes = Array.from(document.querySelectorAll('[data-composer-input]'))
+      if (nodes.length === 0) return null
+      return pickEditor(nodes, document.activeElement)
+    }
 
     /** Draft text read straight from the composer, independent of prop updates. */
     /**
@@ -1869,6 +1926,17 @@ const COVERED_DEBOUNCE_MS = 1200
         return true
       }
 
+      // Only one layer may exist in the document: two docks on the same composer
+      // each draw their own, and the one that mounted first leaves its node behind.
+      // Mount was the only sweep, so a dock that never mounted again left a ghost
+      // nothing could remove — not Esc, not a Session switch.
+      const sweepOthers = () => {
+        if (typeof document.querySelectorAll !== 'function') return
+        for (const node of document.querySelectorAll('[data-composer-quill="layer"]')) {
+          if (node !== host) node.remove()
+        }
+      }
+
       const clear = () => {
         if (positionedParent !== null) {
           positionedParent.style.position = ''
@@ -1895,7 +1963,7 @@ const COVERED_DEBOUNCE_MS = 1200
         // Session's suggestion into the field the user is typing in.
         // A previous mount can survive a body re-render as a detached node, and a
         // second dock instance would draw a second ghost: start clean.
-        for (const stale of document.querySelectorAll('[data-composer-quill="layer"]')) stale.remove()
+        sweepOthers()
         target = editor
         host = document.createElement('div')
         host.setAttribute('data-composer-quill', 'layer')
@@ -2003,7 +2071,16 @@ const COVERED_DEBOUNCE_MS = 1200
         layoutBox()
       }
 
-      return { render, clear, isMounted: () => host !== null && host.isConnected, debug }
+      /** Remove every layer in the document, including ones this instance never made. */
+      const sweep = () => {
+        if (typeof document.querySelectorAll !== 'function') return
+        for (const node of document.querySelectorAll('[data-composer-quill="layer"]')) node.remove()
+        host = null
+        textEl = null
+        target = null
+      }
+
+      return { render, clear, sweep, isMounted: () => host !== null && host.isConnected, debug }
     }
 
 // --- hooks.js — concatenated into client.js by dev/tools/build-client.mjs ---
@@ -2162,6 +2239,7 @@ const COVERED_DEBOUNCE_MS = 1200
             historyItems: input.history.items.length,
             draftEmpty: input.draftEmpty,
             sameSession: input.state.sessionId === input.sessionId,
+            layers: layerStats().layers,
             enabled: input.enabled,
           }),
         })
@@ -2297,7 +2375,13 @@ const COVERED_DEBOUNCE_MS = 1200
             sessionId: data.sessionId,
             draftLength: data.draftLength,
             // The proposal is the user's own text; a length cannot leak a draft.
-            detail: JSON.stringify({ anchor, proposalChars: String(data.proposal).length, ...ghostLayer.debug() }),
+            detail: JSON.stringify({
+              anchor,
+              proposalChars: String(data.proposal).length,
+              layers: layerStats().layers,
+              layerSessions: layerStats().sessions.join(','),
+              ...ghostLayer.debug(),
+            }),
           })
         }
       }
@@ -2390,10 +2474,13 @@ const COVERED_DEBOUNCE_MS = 1200
         }
         if (event.key === 'Enter') { dismissAll(); return }
         if (event.key === 'Escape') {
-          if (visible) {
+          const residue = typeof document.querySelector === 'function'
+            && document.querySelector('[data-composer-quill="layer"]') !== null
+          const phase = typeof ghost.getSnapshot === 'function' ? ghost.getSnapshot().phase : 'idle'
+          if (closeOnEscape({ visible, residue, phase })) {
             event.preventDefault()
             event.stopPropagation()
-            if (latest.current.draft.trim() !== '') sendDock({ type: 'dismissed', draft: latest.current.draft })
+            if (visible && latest.current.draft.trim() !== '') sendDock({ type: 'dismissed', draft: latest.current.draft })
             dismissAll()
           }
           return
@@ -3062,6 +3149,9 @@ const COVERED_DEBOUNCE_MS = 1200
         ghost.cancel()
         ghost.clear(sessionId ?? undefined)
         ghostLayer.clear()
+        // The store only clears its own Session, and a layer from a dock that never
+        // mounts again belongs to nobody: Esc has to take the screen back anyway.
+        if (typeof ghostLayer.sweep === 'function') ghostLayer.sweep()
       }, [stopTimer, ghost, ghostLayer, sessionId])
 
       /**
@@ -3856,6 +3946,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, token, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, token, closeOnEscape, layerStats, pickEditor, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
