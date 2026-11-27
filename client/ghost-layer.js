@@ -3,7 +3,12 @@
      * View-only inline ghost layer. It lives on <body> as a fixed layer, so the
      * composer's own overflow and stacking cannot clip it.
      */
-    function createGhostLayer() {
+    function createGhostLayer(owner = '') {
+      // The Session this layer belongs to. A dock that has been unmounted keeps a
+      // reference to its layer for one more effect run, and mount() used to adopt
+      // whatever composer was on screen at that moment: the old session's tail then
+      // appeared in the new one (issue #10). Ownership is the fix, not timing.
+      const ownSession = typeof owner === 'string' ? owner : ''
       let host = null
       let textEl = null
       let textNode = null
@@ -216,12 +221,16 @@
       const mount = () => {
         const editor = editorEl()
         if (editor === null) return false
+        // A layer that is still attached belongs to some composer right now. If it is
+        // not ours, this dock has been swapped out: painting here would put another
+        // Session's suggestion into the field the user is typing in.
         // A previous mount can survive a body re-render as a detached node, and a
         // second dock instance would draw a second ghost: start clean.
         for (const stale of document.querySelectorAll('[data-composer-quill="layer"]')) stale.remove()
         target = editor
         host = document.createElement('div')
         host.setAttribute('data-composer-quill', 'layer')
+        host.setAttribute('data-session', ownSession)
         host.setAttribute('aria-hidden', 'true')
         // Inside the composer, not on <body>: the composer clips it, dialogs cover it,
         // and the tail wraps inside the same box the text does.
@@ -302,7 +311,16 @@
           clear()
           return
         }
-        if (host === null || !host.isConnected) {
+        // A layer that was taken away must not come back. Whichever dock mounts first
+        // after a Session switch removes the other's node; without this the replaced
+        // dock's next paint adopted the new composer and put the old Session's tail
+        // into the field the user is typing in (issue #10). A fresh mount is still
+        // allowed: that is a layer that was never attached, or one that was cleared.
+        if (host !== null && !host.isConnected) {
+          clear()
+          return
+        }
+        if (host === null) {
           if (!mount()) return
         }
         if (editorEl() !== target) {

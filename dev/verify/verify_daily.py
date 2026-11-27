@@ -386,6 +386,25 @@ def main() -> int:
         h("setComposeMode('ok')")
         h("setComposeTiming({first: 0, step: 220})")
 
+        # ---- S55 被换掉的 dock 不能再往新会话的输入框里画（issue #10）
+        # 真机复现过：切会话时旧的 dock 还会跑一次绘制，旧版会顺手把图层挂到新编辑框上，
+        # 于是上一句的尾巴出现在新会话里。这里不碰时序：直接让两个图层先后挂载，
+        # 第一个被取走之后必须画不动了。
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_function("() => window.__harnessReady === true")
+        stale = h("staleGhost('老会话的尾巴。','新会话的尾巴。')")
+        record(
+            "S55 被换掉的图层不能再往新会话里画",
+            (stale.get("afterOld") or "") == "老会话的尾巴。"
+            and (stale.get("afterNew") or "") == "新会话的尾巴。"
+            and (stale.get("afterStale") or "") == "新会话的尾巴。"
+            and stale.get("oldMounted") is False,
+            f"旧图层={stale.get('afterOld')!r} 新图层={stale.get('afterNew')!r} "
+            f"旧图层再来一次={stale.get('afterStale')!r} oldMounted={stale.get('oldMounted')}",
+        )
+        page.wait_for_timeout(100)
+
         # ---- S6 请求失败一次：自动重试并恢复
         h("setComposeMode('fail-once')")
         reset("")
@@ -1418,7 +1437,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 66
+EXPECTED_SCENARIOS = 67
 
 
 if __name__ == "__main__":

@@ -62,7 +62,7 @@
       const attachmentKey = typeof attachments?.key === 'function' ? attachments.key(attached, attachmentTotal) : ''
       latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, attachments: attached, attachmentTotal, attachmentKey, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
       const layer = React.useRef(null)
-      if (layer.current === null) layer.current = createGhostLayer()
+      if (layer.current === null) layer.current = createGhostLayer(sessionId ?? '')
       const ghostLayer = layer.current
       const { history, historyRef, bumpHistoryEpoch } = useComposerHistory(sessionId)
       // The switch is a preference; the streak is the store's own count.

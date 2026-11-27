@@ -336,6 +336,33 @@ async function main() {
   }
 
   window.__harness = {
+    /**
+     * The dock that a Session switch replaced still holds a reference to its layer for
+     * one more effect run. Ask the layers directly: the old one must not be able to
+     * paint into the composer that took its place.
+     */
+    staleGhost(oldText, newText) {
+      const { createGhostLayer } = mod.__test
+      const read = () => {
+        const node = document.querySelector('[data-composer-quill="text"]')
+        return node === null ? null : node.textContent
+      }
+      const old = createGhostLayer('s-stale-old')
+      old.render({ inlineText: oldText, anchor: 'caret' })
+      const afterOld = read()
+      const fresh = createGhostLayer('s-stale-new')
+      fresh.render({ inlineText: newText, anchor: 'caret' })
+      const afterNew = read()
+      old.render({ inlineText: oldText, anchor: 'caret' })
+      const afterStale = read()
+      return {
+        afterOld,
+        afterNew,
+        afterStale,
+        oldMounted: old.isMounted(),
+        freshMounted: fresh.isMounted(),
+      }
+    },
     type,
     typeAhead,
     /** Put text in the DOM without telling the host, then press Tab. */
