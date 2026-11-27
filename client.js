@@ -1169,6 +1169,7 @@ const COVERED_DEBOUNCE_MS = 1200
     function saveSuggestion(sessionId, kind, draft, items, version = '', mode = '') {
       if (sessionId === null || !Array.isArray(items) || items.length === 0) return
       const map = readSuggestions()
+      delete map[suggestionKey(sessionId, `none-${kind}`, draft, syncEpoch(sessionId))]
       map[suggestionKey(sessionId, kind, draft, syncEpoch(sessionId))] = {
         items,
         at: Date.now(),
@@ -1185,6 +1186,29 @@ const COVERED_DEBOUNCE_MS = 1200
           .forEach((stale) => { delete map[stale] })
       }
       writeSuggestions(map)
+    }
+
+    /**
+     * "Nothing to suggest" is an answer, and it outranks anything stored earlier:
+     * the record is kept under the current turn so the next turn can still be
+     * asked afresh, and a real answer clears it again (see saveSuggestion).
+     */
+    function markNoSuggestion(sessionId, kind, draft) {
+      if (sessionId === null) return
+      const map = readSuggestions()
+      map[suggestionKey(sessionId, `none-${kind}`, draft, syncEpoch(sessionId))] = {
+        items: [],
+        at: Date.now(),
+        version: '',
+        mode: '',
+      }
+      writeSuggestions(map)
+    }
+
+    function saidNothing(sessionId, kind, draft) {
+      if (sessionId === null) return false
+      const map = readSuggestions()
+      return map[suggestionKey(sessionId, `none-${kind}`, draft, syncEpoch(sessionId))] !== undefined
     }
 
     function loadSuggestion(sessionId, kind, draft) {
@@ -2532,6 +2556,14 @@ const COVERED_DEBOUNCE_MS = 1200
             const items = mode === 'next'
               ? (Array.isArray(body?.candidates) ? body.candidates : [])
               : rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
+            // "Nothing to suggest" is an answer too: a stored line from an older
+            // turn must not outlive it, or the next mount would hand it back.
+            if (mode === 'next' && items.length === 0) {
+              // Remember that this question has no answer: the next mount must not
+              // resurrect an older line from storage.
+              clearSessionSuggestions(live.sessionId)
+              markNoSuggestion(live.sessionId, kind, draftNow)
+            }
             ghost.settle(live.sessionId, active, kind, draftNow, items)
             saveSuggestion(live.sessionId, kind, draftNow, items, `${historyRef.current.items.length}`, kind === 'next' ? 'full' : '')
           }, (error) => {
@@ -2935,6 +2967,9 @@ const COVERED_DEBOUNCE_MS = 1200
         // A saved suggestion was written without the composer's attachments: with
         // something attached it would answer an older question.
         if (kind === 'next' && (latest.current.attachmentKey ?? '') !== '') return false
+        // The Host has the last word: once it says this Session has nothing to
+        // open with, storage must not hand an older line back.
+        if (kind === 'next' && forDraft === '' && saidNothing(sessionId, kind, forDraft)) return false
         const marker = `${kind}|${forDraft}`
         if (hydratedFor.current === marker) return false
         const items = loadSuggestion(sessionId, kind, forDraft)
@@ -3791,6 +3826,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

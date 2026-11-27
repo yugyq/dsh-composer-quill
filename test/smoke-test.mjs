@@ -1200,6 +1200,62 @@ await checkAsync('an idle Session requests exactly one next-message prediction',
   assert.equal(prediction.length, 1, `next calls: ${JSON.stringify(calls)}`)
 })
 
+await checkAsync('an answer of nothing outranks a stored opening line', async () => {
+  const { saveSuggestion, loadSuggestion, markNoSuggestion, saidNothing } = moduleExports.__test
+  const face = entryOf('conversation.input.dock').inject()
+  face.ghost.clear()
+  window.localStorage.clear()
+  const line = '这个仓库是干什么用的？帮我看看 README'
+  saveSuggestion('s-stale', 'next', '', [line], '0', 'full')
+  // Without the Host's verdict the record is still what a switch-back reuses.
+  assert.deepEqual(loadSuggestion('s-stale', 'next', ''), [line])
+  assert.equal(saidNothing('s-stale', 'next', ''), false)
+  // The Host already answered this question with "nothing": storage must not outvote it.
+  markNoSuggestion('s-stale', 'next', '')
+  assert.equal(saidNothing('s-stale', 'next', ''), true)
+  calls.length = 0
+  effectQueue = []
+  renderDock(props({ session: { sessionId: 's-stale', running: false } }))
+  for (const run of effectQueue) run()
+  await wait(150)
+  assert.deepEqual(face.ghost.getSnapshot().items, [], 'a settled "nothing" must not be overwritten by a stored line')
+  await wait(400)
+  const asked = calls.filter((call) => call.mode === 'next' && call.sessionId === 's-stale')
+  assert.equal(asked.length, 1, `the Host decides, not storage: ${JSON.stringify(calls)}`)
+  window.localStorage.clear()
+})
+
+await checkAsync('an answer of "nothing" does not leave a stored line behind', async () => {
+  const { saveSuggestion, loadSuggestion, markNoSuggestion, saidNothing } = moduleExports.__test
+  const face = entryOf('conversation.input.dock').inject()
+  const previousFetch = globalThis.fetch
+  window.localStorage.clear()
+  saveSuggestion('s-empty', 'next', '', ['老的开场白'], '0', 'full')
+  // Pretend an older turn already said "nothing" so the mount asks again instead
+  // of painting; the point of this case is what the answer does to storage.
+  markNoSuggestion('s-empty', 'next', '')
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body)
+    calls.push({ url, mode: body.mode ?? 'beacon', sessionId: body.sessionId ?? null })
+    const answer = body.mode === 'next' ? { kind: 'next', candidates: [], reason: 'empty-thread' } : { ok: true }
+    return { ok: true, status: 200, json: async () => answer }
+  }
+  try {
+    calls.length = 0
+    effectQueue = []
+    face.ghost.clear()
+    renderDock(props({ session: { sessionId: 's-empty', running: false } }))
+    for (const run of effectQueue) run()
+    await wait(500)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+  assert.equal(loadSuggestion('s-empty', 'next', ''), null, 'an empty answer must not leave a stored line behind')
+  assert.equal(saidNothing('s-empty', 'next', ''), true, 'the answer has to be remembered')
+  assert.deepEqual(face.ghost.getSnapshot().items, [], 'nothing to paint')
+  window.localStorage.clear()
+})
+
 await checkAsync('an empty composer with a picture asks next with the picture', async () => {
   calls.length = 0
   effectQueue = []

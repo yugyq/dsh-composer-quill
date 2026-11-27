@@ -29,6 +29,9 @@
         // A saved suggestion was written without the composer's attachments: with
         // something attached it would answer an older question.
         if (kind === 'next' && (latest.current.attachmentKey ?? '') !== '') return false
+        // The Host has the last word: once it says this Session has nothing to
+        // open with, storage must not hand an older line back.
+        if (kind === 'next' && forDraft === '' && saidNothing(sessionId, kind, forDraft)) return false
         const marker = `${kind}|${forDraft}`
         if (hydratedFor.current === marker) return false
         const items = loadSuggestion(sessionId, kind, forDraft)

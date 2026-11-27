@@ -578,6 +578,14 @@
             const items = mode === 'next'
               ? (Array.isArray(body?.candidates) ? body.candidates : [])
               : rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
+            // "Nothing to suggest" is an answer too: a stored line from an older
+            // turn must not outlive it, or the next mount would hand it back.
+            if (mode === 'next' && items.length === 0) {
+              // Remember that this question has no answer: the next mount must not
+              // resurrect an older line from storage.
+              clearSessionSuggestions(live.sessionId)
+              markNoSuggestion(live.sessionId, kind, draftNow)
+            }
             ghost.settle(live.sessionId, active, kind, draftNow, items)
             saveSuggestion(live.sessionId, kind, draftNow, items, `${historyRef.current.items.length}`, kind === 'next' ? 'full' : '')
           }, (error) => {

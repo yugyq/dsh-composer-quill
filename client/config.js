@@ -145,6 +145,7 @@
     function saveSuggestion(sessionId, kind, draft, items, version = '', mode = '') {
       if (sessionId === null || !Array.isArray(items) || items.length === 0) return
       const map = readSuggestions()
+      delete map[suggestionKey(sessionId, `none-${kind}`, draft, syncEpoch(sessionId))]
       map[suggestionKey(sessionId, kind, draft, syncEpoch(sessionId))] = {
         items,
         at: Date.now(),
@@ -161,6 +162,29 @@
           .forEach((stale) => { delete map[stale] })
       }
       writeSuggestions(map)
+    }
+
+    /**
+     * "Nothing to suggest" is an answer, and it outranks anything stored earlier:
+     * the record is kept under the current turn so the next turn can still be
+     * asked afresh, and a real answer clears it again (see saveSuggestion).
+     */
+    function markNoSuggestion(sessionId, kind, draft) {
+      if (sessionId === null) return
+      const map = readSuggestions()
+      map[suggestionKey(sessionId, `none-${kind}`, draft, syncEpoch(sessionId))] = {
+        items: [],
+        at: Date.now(),
+        version: '',
+        mode: '',
+      }
+      writeSuggestions(map)
+    }
+
+    function saidNothing(sessionId, kind, draft) {
+      if (sessionId === null) return false
+      const map = readSuggestions()
+      return map[suggestionKey(sessionId, `none-${kind}`, draft, syncEpoch(sessionId))] !== undefined
     }
 
     function loadSuggestion(sessionId, kind, draft) {
