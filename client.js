@@ -27,7 +27,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.32.1'
+    const BUILD = '0.33.0'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -346,6 +346,62 @@ const COVERED_DEBOUNCE_MS = 1200
         throw Object.assign(new Error(message), { status: response.status })
       }
       return await response.json()
+    }
+// --- attachments.js — concatenated into client.js by dev/tools/build-client.mjs ---
+    /** A composer rarely holds more than a screenshot and a file at once. */
+    const MAX_DESCRIBED_ATTACHMENTS = 8
+
+    /**
+     * What the composer is holding, in the only shape this plugin is allowed to send.
+     *
+     * The browser uploads every attachment before the message is sent, so by the time
+     * a suggestion is asked for the Host already holds the bytes and has handed back a
+     * receipt per file. We forward that receipt and nothing else: the request body
+     * stays a few hundred bytes, and the plugin never becomes a second way to move a
+     * file. An attachment that is still uploading is described without a receipt —
+     * the Host then tells the model the picture is not visible yet, which is true.
+     */
+    function attachmentPort(ctx) {
+      const conversationOf = () => {
+        try {
+          return ctx?.conversation ?? ctx?.get?.('conversation') ?? null
+        } catch {
+          return null
+        }
+      }
+      const uploadsOf = (conversation) => {
+        try {
+          const store = conversation?.fileUploads
+          return typeof store?.getSnapshot === 'function' ? (store.getSnapshot() ?? {}) : {}
+        } catch {
+          return {}
+        }
+      }
+      const describe = (input) => {
+        const ids = Array.isArray(input?.attachmentIds) ? input.attachmentIds : []
+        if (ids.length === 0) return []
+        const conversation = conversationOf()
+        let drafted = []
+        try {
+          drafted = typeof conversation?.resolveDraftAttachments === 'function'
+            ? (conversation.resolveDraftAttachments(ids) ?? [])
+            : []
+        } catch {
+          drafted = []
+        }
+        const uploads = uploadsOf(conversation)
+        const described = []
+        for (const item of drafted) {
+          const name = typeof item?.file?.name === 'string' ? item.file.name : ''
+          const bytes = Number.isFinite(item?.file?.size) ? item.file.size : 0
+          const upload = uploads[typeof item?.id === 'string' ? item.id : '']
+          const receiptId = upload?.status === 'ready' && typeof upload.receiptId === 'string' ? upload.receiptId : ''
+          described.push({ kind: item?.kind === 'image' ? 'image' : 'file', name, bytes, receiptId })
+          if (described.length >= MAX_DESCRIBED_ATTACHMENTS) break
+        }
+        return described
+      }
+      return { describe }
     }
 // --- store.js — concatenated into client.js by dev/tools/build-client.mjs ---
 
@@ -2240,7 +2296,7 @@ const COVERED_DEBOUNCE_MS = 1200
             }, live.timeoutMs || CLIENT_TIMEOUT_MS)
           }
           bump()
-          streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose' }, active.signal, {
+          streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose', attachments: live.attachments ?? [] }, active.signal, {
             start: (data) => {
               bump()
               // Keep whatever is on screen: the first delta replaces it.
@@ -2665,7 +2721,7 @@ const COVERED_DEBOUNCE_MS = 1200
 
 // --- dock.js — concatenated into client.js by dev/tools/build-client.mjs ---
     function GhostDock(props) {
-      const { session, input, inputActions, t } = props
+      const { session, input, inputActions, t, attachments } = props
       const ghost = props.ghost ?? idleGhost()
       const config = props.config ?? defaultConfig()
       const settings = React.useSyncExternalStore(config.subscribe, config.getSnapshot)
@@ -2715,7 +2771,10 @@ const COVERED_DEBOUNCE_MS = 1200
       const retriedFor = React.useRef(null)
       const { booking: dockBooking, send: sendDock } = useDockBooking()
       const latest = React.useRef({})
-      latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
+      // Described once per render, from the composer's own attachment list: the
+      // request path must not read a store that may have moved on since.
+      const attached = typeof attachments?.describe === 'function' ? attachments.describe(input) : []
+      latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, attachments: attached, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
       const layer = React.useRef(null)
       if (layer.current === null) layer.current = createGhostLayer()
       const ghostLayer = layer.current
@@ -3499,7 +3558,7 @@ const COVERED_DEBOUNCE_MS = 1200
         id: 'composer-quill',
         order: 11,
         locale: NS,
-        inject: () => ({ ghost, config }),
+        inject: () => ({ ghost, config, attachments: attachmentPort(ctx) }),
       }, GhostDockEntry))
 
       // Its own section in the Settings nav, not an item inside General: the card has
@@ -3526,6 +3585,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { attachmentPort, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
