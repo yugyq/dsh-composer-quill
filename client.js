@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.65'
+    const BUILD = '0.31.66'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -46,7 +46,7 @@ window.__ModuleLoader__.load({
     const COMPOSE_DEBOUNCE_MS = 120
     // Consecutive suggestions ignored before rewrites are withheld. Three is the
     // point where the user is clearly not reading them; one accept restores them.
-    const IGNORE_STREAK_LIMIT = 3
+    const IGNORE_STREAK_LIMIT = 2
 /** While the draft stays inside the on-screen proposal, wait this long. */
 const COVERED_DEBOUNCE_MS = 1200
     /**
@@ -100,8 +100,8 @@ const COVERED_DEBOUNCE_MS = 1200
   'settings.reasoning.high': '高',
   'settings.reasoning.max': '最高',
   'settings.reasoning.hint': '补全用不上深度思考；调高会更慢、更贵，但复杂改写可能更准。',
-  'settings.suppress': '忽略三次后暂停整段改写',
-  'settings.suppress.hint': '连续忽略三条建议后，只保留在句尾接着写；整段改写暂停，采纳一次即恢复。',
+  'settings.suppress': '忽略两次后暂停整段改写',
+  'settings.suppress.hint': '连续忽略两条建议后，只保留在句尾接着写；整段改写暂停，采纳一次即恢复。',
       'usage.today': '今天',
       'usage.session': '本会话',
       'usage.lifetime': '累计',
@@ -162,8 +162,8 @@ const COVERED_DEBOUNCE_MS = 1200
   'settings.reasoning.high': 'High',
   'settings.reasoning.max': 'Max',
   'settings.reasoning.hint': 'Completions rarely need deep thinking; higher is slower and dearer, though a tangled rewrite may land better.',
-  'settings.suppress': 'Pause rewrites after three ignores',
-  'settings.suppress.hint': 'After three suggestions in a row go unused, only tails keep arriving; rewrites stay off until one is accepted.',
+  'settings.suppress': 'Pause rewrites after two ignores',
+  'settings.suppress.hint': 'After two suggestions in a row go unused, only tails keep arriving; rewrites stay off until one is accepted.',
       'usage.today': 'Today',
       'usage.session': 'This Session',
       'usage.lifetime': 'Lifetime',

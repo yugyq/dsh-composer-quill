@@ -173,7 +173,7 @@ def main() -> int:
         ghost = snap["text"]["text"] if snap["text"] else ""
         record("S5 Esc 后同草稿不再重弹", chip == "" and ghost == "", f"chip={chip!r} ghost={ghost!r}")
 
-        # ---- S50 连续忽略三次：整段改写暂停，尾巴照常，采纳一次恢复
+        # ---- S50 连续忽略两次：整段改写暂停，尾巴照常，采纳一次恢复
         # S5 already spent one ignore in this page's store, so start from a clean one.
         page.reload()
         page.wait_for_selector("[data-composer-input]")
@@ -189,8 +189,13 @@ def main() -> int:
 
         first = ignore_one('这段曰志报错了')
         second = ignore_one('这段曰志报错了两处')
-        third = ignore_one('这段曰志报错了两处还')
-        # The fourth rewrite is requested but must not be painted.
+        # 等压制真的生效再打下一个字：忽略那一刻如果还有请求在飞，它是按旧计数发起的，
+        # 回来时仍然会画（这是对的），但会让这条断言读到上一次的结果。
+        for _ in range(30):
+            if (h("suppress()") or {}).get("on") is True:
+                break
+            page.wait_for_timeout(100)
+        # The third rewrite is requested but must not be painted.
         reset("")
         calls_before = compose_calls()
         h("typeLive('这段曰志报错了两处还有堆栈', {delay: 40})")
@@ -203,9 +208,9 @@ def main() -> int:
         page.wait_for_timeout(1700)
         tail = proposal_of(h("snapshot()"))
         record(
-            "S50 忽略三次后不再画改写、尾巴照常",
-            all("采用改写" in c for c in (first, second, third)) and asked >= 1 and suppressed == "" and "按 Tab" in tail,
-            f"三次改写={['采用改写' in first, '采用改写' in second, '采用改写' in third]} 第四次请求={asked} 压制后={suppressed!r} 尾巴={tail[:20]!r}",
+            "S50 忽略两次后不再画改写、尾巴照常",
+            all("采用改写" in c for c in (first, second)) and asked >= 1 and suppressed == "" and "按 Tab" in tail,
+            f"两次改写={['采用改写' in first, '采用改写' in second]} 第三次请求={asked} 压制后={suppressed!r} 尾巴={tail[:20]!r} 压制态={h('suppress()')}",
         )
         # One acceptance earns rewrites back.
         h("accept()")

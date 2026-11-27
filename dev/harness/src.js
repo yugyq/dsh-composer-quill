@@ -361,6 +361,7 @@ async function main() {
     calls,
     draft: () => editor.textContent ?? '',
     store: () => (face && face.ghost ? face.ghost.getSnapshot() : null),
+    suppress: () => (face && face.ghost && face.ghost.suppressState ? face.ghost.suppressState() : null),
     setSession(id) {
       render(editor.textContent ?? '', id)
     },
