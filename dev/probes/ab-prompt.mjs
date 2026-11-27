@@ -5,17 +5,20 @@
  * Reads a key from the local credential store, never prints it. Costs a few hundred
  * tokens per call; defaults to deepseek-flash to keep the bill trivial.
  *
- *   node dev/ab-prompt.mjs            # 3 runs per variant
- *   node dev/ab-prompt.mjs --runs=5
+ *   node dev/probes/ab-prompt.mjs            # 3 runs per variant
+ *   node dev/probes/ab-prompt.mjs --runs=5
  */
 import fs from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 const runsArg = process.argv.find((arg) => arg.startsWith('--runs='))
 const RUNS = runsArg ? Number(runsArg.slice(7)) : 3
 const MODEL = 'deepseek-flash'
 
 // ---- key, never printed
-const credFile = 'C:/Users/dqdyfrw/.dsh/.credentials.yaml'
+// The credential store path is machine-specific: allow an override, default to this user's.
+const credFile = process.env.DSH_QUILL_CREDENTIALS ?? join(homedir(), '.dsh', '.credentials.yaml')
 const credText = fs.readFileSync(credFile, 'utf8')
 const keys = [...new Set([...credText.matchAll(/(sk-[A-Za-z0-9_-]{16,})/g)].map((m) => m[1]))]
 if (keys.length === 0) {

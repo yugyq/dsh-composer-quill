@@ -51,4 +51,4 @@ jobs:
           pip install playwright
           python -m playwright install --with-deps chromium
       - name: Browser scenarios
-        run: python dev/verify_daily.py
+        run: python dev/verify/verify_daily.py

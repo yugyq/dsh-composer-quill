@@ -3,7 +3,7 @@
  * The gate is `length >= 4 && await composeShortDraft(...)`, so a shorter draft skips
  * the short path entirely and falls into the heavy main compose.
  */
-const { __test } = await import('../index.js')
+const { __test } = await import('../../index.js')
 const { produceCompose } = __test
 
 const longEvents = []

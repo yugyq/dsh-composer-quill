@@ -5,16 +5,20 @@
  * factory, both slot registrations, the beacon, and the two request triggers
  * (next message, compose) against stub props and a stub fetch.
  *
- * Usage: node smoke-test.mjs
+ * Usage: node test/smoke-test.mjs   (or `npm test`)
  */
 process.env.DSH_COMPOSER_QUILL_NO_CACHE = '1'
+// State files must never land in the user's real profile. Without an explicit
+// directory the suite wrote the real ledger whenever the shell already carried
+// DSH_PROFILE_DIR (two checks failed with EPERM/ENOENT because of exactly that).
+process.env.DSH_COMPOSER_QUILL_STATE_DIR = mkdtempSync(join(tmpdir(), 'quill-state-'))
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { homedir, tmpdir as tmpdirOf } from 'node:os'
 import { tmpdir } from 'node:os'
-import { pathToFileURL } from 'node:url'
+import { buildClient } from '../dev/tools/build-client.mjs'
 
 // --- runner -----------------------------------------------------------------
 // Zero dependencies on purpose: the suite has to run from a bare checkout, and
@@ -144,7 +148,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // ---------------------------------------------------------------- Host half
 group('host: pure helpers')
-const host = await import(pathToFileURL('./index.js').href)
+const host = await import(new URL('../index.js', import.meta.url).href)
 
 check('host exports name/inject/apply', () => {
   assert.equal(host.name, 'composerQuill')
@@ -253,7 +257,48 @@ check('the on-disk cache is inert in tests and knows where it lives', () => {
   const file = cacheFile()
   assert.ok(file.endsWith('composer-quill-cache.json'), file)
   assert.ok(isAbsolute(file), file)
-  assert.ok(file.startsWith(process.env.DSH_PROFILE_DIR ?? process.env.DSH_HOME ?? homedir()), file)
+  // The suite pins DSH_COMPOSER_QUILL_STATE_DIR, and that override wins over the
+  // ambient profile: a test run must not touch the user's real state.
+  assert.ok(file.startsWith(process.env.DSH_COMPOSER_QUILL_STATE_DIR), file)
+})
+
+check('one state directory, and never the bare home directory', () => {
+  const { stateDirectory } = host.__test
+  const saved = {
+    override: process.env.DSH_COMPOSER_QUILL_STATE_DIR,
+    profile: process.env.DSH_PROFILE_DIR,
+    home: process.env.DSH_HOME,
+  }
+  const restore = () => {
+    for (const [key, value] of [
+      ['DSH_COMPOSER_QUILL_STATE_DIR', saved.override],
+      ['DSH_PROFILE_DIR', saved.profile],
+      ['DSH_HOME', saved.home],
+    ]) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+  try {
+    // The suite pins an override for isolation; this case is about the rule underneath it.
+    delete process.env.DSH_COMPOSER_QUILL_STATE_DIR
+    // The profile wins over DSH's home, the documented ~/.dsh is the last resort,
+    // and plain `~` is never an answer.
+    process.env.DSH_HOME = join(tmpdir(), 'quill-state-home')
+    process.env.DSH_PROFILE_DIR = join(tmpdir(), 'quill-state-profile')
+    assert.equal(stateDirectory(), process.env.DSH_PROFILE_DIR)
+    delete process.env.DSH_PROFILE_DIR
+    assert.equal(stateDirectory(), process.env.DSH_HOME)
+    delete process.env.DSH_HOME
+    const fallback = stateDirectory()
+    assert.equal(fallback, join(homedir(), '.dsh'), fallback)
+    assert.notEqual(fallback, homedir(), 'the bare home directory split the state files')
+  } finally {
+    restore()
+    for (const dir of ['quill-state-home', 'quill-state-profile']) {
+      try { rmSync(join(tmpdir(), dir), { recursive: true, force: true }) } catch { /* already gone */ }
+    }
+  }
 })
 
 
@@ -368,7 +413,10 @@ check('a one-character draft is asked for a full short sentence', () => {
 
   await checkAsync('a model without reasoning metadata still gets an answer', async () => {
     // dsh-llm refuses an explicit effort for a model that declares none, and reports it
-    // as a terminal finish chunk rather than throwing.
+    // as a terminal finish chunk rather than throwing. The Host exposes no reasoning
+    // metadata, so the refusal is learned once and not re-probed on every call.
+    const { resetEffortRefusals } = host.__test
+    resetEffortRefusals()
     const calls = []
     const { produceCompose } = host.__test
     const session = { id: 's-noeffort', requestHeader: () => ({ config: { provider: 'p', model: 'plain' } }), snapshotEvents: () => [] }
@@ -413,6 +461,21 @@ check('a one-character draft is asked for a full short sentence', () => {
     assert.deepEqual(calls, ['off', null], `the retry should drop the effort, saw ${JSON.stringify(calls)}`)
     const final = sent.find((item) => item.event === 'final')
     assert.ok(final && String(final.data.text).includes('接口超时'), JSON.stringify(sent.slice(-2)))
+
+    // Same model, next suggestion: one call, no failed probe this time.
+    await produceCompose(ctx, {
+      sessionId: 's-noeffort',
+      session,
+      events,
+      draft: '再看看这个超时',
+      key: 'no-effort-2',
+      send: () => {},
+      locale: 'zh-CN',
+      forced: '',
+      signal: new AbortController().signal,
+    })
+    assert.deepEqual(calls, ['off', null, null], `a known refusal must not be retried, saw ${JSON.stringify(calls)}`)
+    resetEffortRefusals()
   })
 
   check('the route token belongs to the process, not to one apply()', () => {
@@ -885,9 +948,17 @@ globalThis.document = {
   getElementById: () => null,
 }
 
-await import(pathToFileURL('./client.js').href)
+await import(new URL('../client.js', import.meta.url).href)
 check('client registers a module factory', () => {
   assert.equal(globalThis.__ghostFactory.id, 'dsh-composer-quill')
+})
+
+check('the served client.js is generated from client/ and in sync', () => {
+  // The browser half is authored under client/ and concatenated: one artifact, eight
+  // sources. A hand edit to client.js would be silently overwritten by the next build,
+  // so the suite fails instead. Run `npm run build:client` after touching client/.
+  const shipped = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.equal(shipped, buildClient(), 'client.js is stale: run `npm run build:client`')
 })
 
 // The client's own state lives inside the module it just built: a fresh factory call
@@ -918,6 +989,14 @@ const moduleExports = globalThis.__ghostFactory.factory((name) => {
 check('client exports slots + locale inject', () => {
   assert.deepEqual(moduleExports.inject, ['slots', 'locale'])
   assert.equal(typeof moduleExports.apply, 'function')
+})
+
+await checkAsync('a Host without the slot services leaves the composer alone', async () => {
+  // Runtime drift cannot be stopped by `engines` (that only gates installation). If a
+  // Host release drops or renames one of the two services this plugin injects, it must
+  // report and go inert instead of throwing during activation.
+  const cleanup = await moduleExports.apply({ slots: undefined, locale: undefined })
+  assert.equal(typeof cleanup, 'function')
 })
 
 check('followRemainder shrinks the tail while the user types into it', () => {
@@ -2090,9 +2169,149 @@ group('host: compose prompt')
     assert.equal(prompt.includes('translated into English'), true)
   })
 
-  check('a very short draft takes the finish-it branch', () => {
-    const prompt = api.composePrompt({ ...base, draft: '帮' })
-    assert.equal(prompt.includes('characters. Finish it'), true)
+  check('a very short draft takes the short prompt, not a hidden branch', () => {
+    // composePrompt used to carry a second, unreachable short-draft branch: both
+    // transports already routed short drafts to buildShortDraftPrompt. The plan now
+    // says which prompt handles the draft, and it is the only place that decides.
+    const short = api.composePlan('帮')
+    assert.equal(short.short, true)
+    assert.equal(short.mode, 'compose', 'a one-character draft never buys the rewrite budget')
+    assert.equal(short.minTail, 3)
+    const long = api.composePlan('帮我把这段日志整理一下，顺便看看哪里超时')
+    assert.equal(long.short, false)
+    assert.equal(long.allowTail, true)
+    assert.equal(long.mode, 'compose')
+    const paragraph = api.composePlan('帮'.repeat(300))
+    assert.equal(paragraph.mode, 'rewrite', 'a paragraph rewrite needs the bigger cap')
+  })
+}
+
+group('host: one question for both transports')
+
+{
+  const api = host.__test
+  const events = [
+    { type: 'request/header', data: { header: { config: { provider: 'p', model: 'm' } } } },
+    { type: 'user/message', data: { content: [{ type: 'text', text: '帮我把这段日志整理一下' }] } },
+    { type: 'assistant/message', data: { content: [{ type: 'text', text: '把报错行贴上来。' }] } },
+  ]
+
+  /** A ctx whose llm records exactly what each transport asked it. */
+  const makeCtx = (session, replies) => {
+    const calls = []
+    return {
+      calls,
+      ctx: {
+        get: () => undefined,
+        agents: { get: () => ({ session }) },
+        llm: {
+          async *stream(options) {
+            calls.push({
+              system: options.system,
+              prompt: options.messages[0].content[0].text,
+              maxTokens: options.maxTokens,
+              reasoningEffort: options.reasoningEffort ?? null,
+            })
+            const text = replies[Math.min(calls.length - 1, replies.length - 1)]
+            if (text !== '') yield { type: 'text-delta', text }
+            yield { type: 'finish', reason: { kind: 'stop' } }
+          },
+        },
+      },
+    }
+  }
+
+  /** Ask the same draft over SSE and over JSON; return both recorded call lists. */
+  const askBoth = async (draft, replies, route) => {
+    const sessionId = `s-parity-${draft.length}-${Math.random().toString(36).slice(2, 8)}`
+    const session = {
+      id: sessionId,
+      requestHeader: () => ({ config: { provider: 'p', model: 'm' } }),
+      snapshotEvents: () => events,
+    }
+    const sse = makeCtx(session, replies)
+    await api.produceCompose(sse.ctx, {
+      sessionId,
+      session,
+      events,
+      draft,
+      key: `parity-sse-${sessionId}`,
+      send: () => {},
+      locale: 'zh-CN',
+      forced: '',
+      signal: new AbortController().signal,
+      route,
+    })
+    const json = makeCtx(session, replies)
+    await api.predict(json.ctx, { sessionId, draft, mode: 'compose', locale: 'zh-CN', forced: '', route }, new AbortController().signal)
+    return { sse: sse.calls, json: json.calls }
+  }
+
+  await checkAsync('the same long draft gets the same question and budget over SSE and JSON', async () => {
+    const draft = `${'这是一段要整理的日志说明，'.repeat(20)}最后一行`
+    assert.equal(Array.from(draft).length >= 240, true)
+    const both = await askBoth(draft, ['，顺便说下是哪个接口超时。'])
+    assert.equal(both.sse.length, 1)
+    assert.equal(both.json.length, 1)
+    assert.deepEqual(both.json[0], both.sse[0])
+    // The rewrite plan is what bought the bigger cap; both transports must use it.
+    assert.equal(both.sse[0].maxTokens, api.maxTokensFor('rewrite'))
+  })
+
+  await checkAsync('a two-character draft never thinks, on either transport', async () => {
+    const both = await askBoth('帮', ['看看日志。'], { reasoningEffort: 'high' })
+    assert.deepEqual(both.json[0], both.sse[0])
+    assert.equal(both.sse[0].reasoningEffort, 'off', 'the short branch ignores the thinking setting')
+    assert.equal(both.sse[0].prompt.includes('3 to 20'), true, 'the short prompt is the one asked')
+  })
+
+  await checkAsync('the append-a-sentence fallback is the same question over SSE and JSON', async () => {
+    const both = await askBoth('帮我把这段日志整理一下', ['', '顺便把行号也贴一下。'])
+    assert.equal(both.sse.length, 2)
+    assert.equal(both.json.length, 2)
+    assert.deepEqual(both.json[1], both.sse[1])
+    // The style profile and the digest used to be missing on the JSON route.
+    assert.equal(both.sse[1].prompt.includes('Style profile of this user'), true)
+    assert.equal(both.sse[1].prompt.includes('Conversation digest'), true)
+  })
+
+  await checkAsync('a JSON retry joins the stream already paying for the same draft', async () => {
+    // One cache key, one in-flight call: the two transports used to have separate maps,
+    // so a fallback request during a stream could buy the same answer twice.
+    const sessionId = `s-shared-${Math.random().toString(36).slice(2, 8)}`
+    const session = {
+      id: sessionId,
+      requestHeader: () => ({ config: { provider: 'p', model: 'm' } }),
+      snapshotEvents: () => events,
+    }
+    let calls = 0
+    const ctx = {
+      get: () => undefined,
+      agents: { get: () => ({ session }) },
+      llm: {
+        async *stream() {
+          calls += 1
+          await new Promise((resolve) => setTimeout(resolve, 40))
+          yield { type: 'text-delta', text: '，顺便说下是哪个接口超时。' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      },
+    }
+    const res = new EventEmitter()
+    res.statusCode = 0
+    res.writableEnded = false
+    res.destroyed = false
+    res.setHeader = () => {}
+    res.flushHeaders = () => {}
+    res.write = () => true
+    res.end = () => { res.writableEnded = true }
+    const draft = '帮我把这段日志整理一下'
+    const streaming = api.composeStream(ctx, { sessionId, draft, locale: 'zh-CN', forced: '', receivedAt: Date.now() }, res, new AbortController().signal)
+    const settled = await api.predict(ctx, { sessionId, draft, mode: 'compose', locale: 'zh-CN', forced: '' }, new AbortController().signal)
+    await streaming
+    assert.equal(calls, 1, `the shared draft should cost one call, saw ${calls}`)
+    assert.equal(typeof settled.text, 'string')
+    assert.ok(settled.text.includes('接口超时'), JSON.stringify(settled))
   })
 }
 
@@ -2897,15 +3116,25 @@ group('host: stream telemetry')
 
   const withTempState = async (body) => {
     const dir = mkdtempSync(join(tmpdir(), 'quill-trace-'))
-    // DSH_PROFILE_DIR wins over DSH_HOME, and the Host sets both: moving only the
-    // latter wrote these test lines into the real log (it did, once).
-    const saved = { home: process.env.DSH_HOME, profile: process.env.DSH_PROFILE_DIR }
+    // The explicit override wins over both, so it is the one that actually moves the
+    // trace file; DSH_PROFILE_DIR / DSH_HOME move with it so nothing else resolves
+    // back to the suite's shared state directory.
+    const saved = {
+      override: process.env.DSH_COMPOSER_QUILL_STATE_DIR,
+      home: process.env.DSH_HOME,
+      profile: process.env.DSH_PROFILE_DIR,
+    }
+    process.env.DSH_COMPOSER_QUILL_STATE_DIR = dir
     process.env.DSH_HOME = dir
     process.env.DSH_PROFILE_DIR = dir
     try {
       return await body(dir)
     } finally {
-      for (const [key, value] of [['DSH_HOME', saved.home], ['DSH_PROFILE_DIR', saved.profile]]) {
+      for (const [key, value] of [
+        ['DSH_COMPOSER_QUILL_STATE_DIR', saved.override],
+        ['DSH_HOME', saved.home],
+        ['DSH_PROFILE_DIR', saved.profile],
+      ]) {
         if (value === undefined) delete process.env[key]
         else process.env[key] = value
       }

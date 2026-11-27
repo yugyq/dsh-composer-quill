@@ -19,11 +19,13 @@ There is no telemetry, no analytics endpoint, no update check, and no third-part
 
 ## Local files
 
+All three live in one state directory: `$DSH_PROFILE_DIR` when a profile is set, else `$DSH_HOME`, else `~/.dsh`. `DSH_COMPOSER_QUILL_STATE_DIR` pins it for tests and diagnostics. The bare home directory is never used.
+
 | File | Contents |
 | --- | --- |
-| `~/.dsh/composer-quill.log` | JSONL diagnostics: request shapes, cache hits, result counts, timings. Prompts and drafts are not written here; the digest and style summary are not either. |
-| `~/.dsh/composer-quill-usage.json` | Call counts, token counts, and a cost figure in micro-USD. Numbers only. |
-| `~/.dsh/composer-quill-cache.json` | The suggestions themselves, so a restart does not re-pay for a suggestion you already saw. Cleared on request. |
+| `<state>/composer-quill.log` | JSONL diagnostics: request shapes, cache hits, result counts, timings. Prompts and drafts are not written here; the digest and style summary are not either. |
+| `<state>/composer-quill-usage.json` | Call counts, token counts, and a cost figure in micro-USD. Numbers only. |
+| `<state>/composer-quill-cache.json` | The suggestions themselves, in plain text, so a restart does not re-pay for a suggestion you already saw. Cleared on request. |
 
 Browser settings live in `localStorage` under `dsh.composer-quill.*`.
 

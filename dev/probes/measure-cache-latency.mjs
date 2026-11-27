@@ -2,16 +2,18 @@
  * What the reorder actually buys, on the real model: cache hit rate and time to first
  * token, measured the way typing produces calls (one draft per keystroke burst).
  *
- *   node dev/measure-cache-latency.mjs
+ *   node dev/probes/measure-cache-latency.mjs
  */
 import fs from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 const MODEL = 'deepseek-flash'
 const RUNS_PER_SCENARIO = 6
 // LONG=1 triples the transcript, to see whether prefill size is what latency waits on.
 const REPEAT = process.env.LONG === '1' ? 3 : 1
 
-const credText = fs.readFileSync('C:/Users/dqdyfrw/.dsh/.credentials.yaml', 'utf8')
+const credText = fs.readFileSync(process.env.DSH_QUILL_CREDENTIALS ?? join(homedir(), '.dsh', '.credentials.yaml'), 'utf8')
 const keys = [...new Set([...credText.matchAll(/(sk-[A-Za-z0-9_-]{16,})/g)].map((m) => m[1]))]
 let key = null
 for (const candidate of keys) {

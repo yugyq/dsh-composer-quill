@@ -1,17 +1,18 @@
-# 依赖与产物
+# 依赖与构建产物
 node_modules/
 dist/
-*.log
-*.log.1
+*.tgz
 
 # 运行时产物（插件自己写出来的，不进版本库）
 composer-quill-cache.json
 composer-quill-cache.json.*.tmp
+*.log
+*.log.1
 
 # 模拟器构建产物（.gitignore 忽略，需本地构建）
 dev/harness/bundle.js
 
-# 验证脚本的截图与输出
+# 验证脚本的输出：截图与汇总落在当前目录
 *.png
 daily-out.txt
 smoke-out.txt
@@ -22,30 +23,25 @@ smoke-out.txt
 .DS_Store
 Thumbs.db
 
-# 本地临时脚本（手工调试用，命名以 _ 开头）
-_*.mjs
-
-# Python 缓存（语法检查产生）
-__pycache__/
-*.pyc
-
-# README 截图（故意保留）
-!docs/assets/
-!docs/assets/*.png
-
-# 商店卡片图标与市场详情页截图
-!assets/
-!assets/*.png
-!screenshots.json
-# 抖动记账：本地状态，不进仓库
-dev/flake-ledger.json
-# 提示词 A/B 的运行产物：每次覆盖，不进仓库
-dev/ab-prompt-last.json
-
-# 临时脚本与提交说明（我的工作痕迹，不属于项目）
+# 本地临时脚本与提交说明（文件名以 _ 开头，任何层级）
 _*.mjs
 _*.txt
 _*.py
 _*.md
 _*.patch
 _*.json
+
+# Python 字节码
+__pycache__/
+*.pyc
+
+# 本地一次性目录与作业状态
+/tmp/
+dev/flake-ledger.json
+dev/ab-prompt-last.json
+
+# README 截图与商店图标是仓库内容，必须保留
+!docs/assets/
+!docs/assets/*.png
+!assets/
+!assets/*.png

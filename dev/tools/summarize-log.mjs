@@ -3,7 +3,7 @@
  * which build ran, how often requests were cancelled, and whether the
  * next-message predictions still reach into old topics.
  *
- * Usage: node dev/summarize-log.mjs [hours] [sessionId]
+ * Usage: node dev/tools/summarize-log.mjs [hours] [sessionId]
  */
 
 import { readFileSync, existsSync } from 'node:fs'

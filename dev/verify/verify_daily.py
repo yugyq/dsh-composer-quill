@@ -14,7 +14,7 @@ from pathlib import Path
 import time
 from playwright.sync_api import sync_playwright
 
-HARNESS = Path(__file__).resolve().parent / "harness" / "index.html"
+HARNESS = Path(__file__).resolve().parent.parent / "harness" / "index.html"
 URL = HARNESS.as_uri()
 def _chrome_path():
     """Chromium for Playwright, located at runtime instead of hard-coded."""
@@ -440,15 +440,20 @@ def main() -> int:
         h(f"typeLive({s53_draft!r}, {{delay: 20}})")
         page.wait_for_timeout(900)          # 请求在飞：首字 2500ms 还没到
         sent_before = len([c for c in h("calls") if c.get("mode") == "compose"])
+        # Measure the abort the switch itself causes. Typing aborted some requests on
+        # its own, so a bare `aborts() >= 1` was green even when the switch did
+        # nothing: take the count once typing has settled and require it to move.
+        aborts_before = h("aborts()")
         h("setSession('s53-b')")
         page.wait_for_timeout(700)
-        aborted = h("aborts()")
+        aborts_after = h("aborts()")
+        aborted_delta = aborts_after - aborts_before
         after_calls = [c for c in h("calls") if c.get("mode") == "compose"][sent_before:]
         stale = [c for c in after_calls if c.get("draft") == s53_draft]
         record(
             "S53 切会话掐掉在飞的补全请求",
-            sent_before >= 1 and aborted >= 1 and len(stale) == 0,
-            f"切前 compose={sent_before} 取消={aborted} 切后同草稿={len(stale)}",
+            sent_before >= 1 and aborted_delta >= 1 and len(stale) == 0,
+            f"切前 compose={sent_before} 切换新增取消={aborted_delta} 切后同草稿={len(stale)}",
         )
         h("setComposeTiming({first: 0, step: 220})")
 
@@ -1265,7 +1270,7 @@ def main() -> int:
             and "147" in panel
             and "12 次" in panel
             and ("累计" in panel or "usage.lifetime" in panel),
-            f"面板={ (panel or '')[:80]!r }",
+            f"面板={(panel or '')[:80]!r}",
         )
 
         page.evaluate(

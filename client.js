@@ -22,11 +22,12 @@
 window.__ModuleLoader__.load({
   id: 'dsh-composer-quill',
   factory(require) {
+// --- prelude.js — concatenated into client.js by dev/tools/build-client.mjs ---
     const React = require('react')
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.65'
+    const BUILD = '0.32.0'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -346,6 +347,7 @@ const COVERED_DEBOUNCE_MS = 1200
       }
       return await response.json()
     }
+// --- store.js — concatenated into client.js by dev/tools/build-client.mjs ---
 
     function createSnapshotStore(initial) {
       let value = initial
@@ -833,6 +835,7 @@ const COVERED_DEBOUNCE_MS = 1200
       }
     }
 
+// --- config.js — concatenated into client.js by dev/tools/build-client.mjs ---
     const CONFIG_KEY = 'dsh.composer-quill.config'
     const LEGACY_KEY = 'dsh.composer-quill.enabled'
     const DEFAULT_CONFIG = Object.freeze({
@@ -1204,6 +1207,7 @@ const COVERED_DEBOUNCE_MS = 1200
      * tracked draft lags a frame, so the dock used to show the just-inserted text
      * again as if it were a suggestion.
      */
+// --- geometry.js — concatenated into client.js by dev/tools/build-client.mjs ---
     function proposalIsStale(proposal, editorText) {
       const left = String(proposal ?? '').replace(/\s+/g, '')
       const right = String(editorText ?? '').replace(/\s+/g, '')
@@ -1422,6 +1426,7 @@ const COVERED_DEBOUNCE_MS = 1200
         return rest.toString().trim() === '' ? 'end' : 'inside'
       }
 
+// --- ghost-layer.js — concatenated into client.js by dev/tools/build-client.mjs ---
     /**
      * View-only inline ghost layer. It lives on <body> as a fixed layer, so the
      * composer's own overflow and stacking cannot clip it.
@@ -1742,6 +1747,7 @@ const COVERED_DEBOUNCE_MS = 1200
       return { render, clear, isMounted: () => host !== null && host.isConnected, debug }
     }
 
+// --- hooks.js — concatenated into client.js by dev/tools/build-client.mjs ---
     let idleGhostStore = null
     let defaultConfigStore = null
     const idleGhost = () => (idleGhostStore ??= {
@@ -2657,6 +2663,7 @@ const COVERED_DEBOUNCE_MS = 1200
           // eslint-disable-next-line react-hooks/exhaustive-deps
     }
 
+// --- dock.js — concatenated into client.js by dev/tools/build-client.mjs ---
     function GhostDock(props) {
       const { session, input, inputActions, t } = props
       const ghost = props.ghost ?? idleGhost()
@@ -3466,6 +3473,7 @@ const COVERED_DEBOUNCE_MS = 1200
       }
     }
 
+// --- entry.js — concatenated into client.js by dev/tools/build-client.mjs ---
     const GhostDockEntry = (props) => h(GhostBoundary, null, h(GhostDock, props))
     const GhostSettingsEntry = (props) => h(GhostBoundary, null, h(GhostSettingsRow, props))
 
@@ -3475,6 +3483,12 @@ const COVERED_DEBOUNCE_MS = 1200
       // The beacon names the shape this bundle registers, so a reload can be told apart
       // from the previous build without guessing.
       report('apply', { detail: JSON.stringify({ slots: Boolean(ctx.slots), locale: Boolean(ctx.locale), settings: 'settings.section', icon: Boolean(ctx.slots) }) })
+      // A Host release that renames or drops one of these must disable the feature,
+      // not take the composer down with it: the plugin owns a slot row, not the page.
+      if (ctx === null || typeof ctx !== 'object' || ctx.slots === undefined || ctx.locale === undefined) {
+        report('apply-unsupported', { detail: JSON.stringify({ slots: Boolean(ctx?.slots), locale: Boolean(ctx?.locale) }) })
+        return () => {}
+      }
       ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'composer-quill: dictionaries')
 
       const ghost = createGhostStore()

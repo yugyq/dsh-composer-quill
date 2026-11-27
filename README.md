@@ -17,7 +17,7 @@ dsh plugin --profile desktop add dsh-composer-quill
 - **说到一半被打断**：切走再回来，建议还在原位
 - **每次都要重打的那段话**：从你自己的历史里取，不花模型调用
 
-完全在本机：请求走你已经配好的模型路由，没有第三方服务器，也不上报任何东西。
+请求走你已经配好的模型路由：没有第三方服务器，也不上报任何东西。不过「本机」只表示不经过额外中转——最近两轮对话和你的草稿会发给你配置的模型服务（很可能是云端），遮蔽只是九类形状的尽力而为。
 
 ## 四种建议
 
@@ -84,7 +84,7 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill   # 或从仓�
 
 「下一句」和「补写」是两个独立开关，只想要一个就关掉另一个。
 
-**消耗**：面板显示今天与累计的调用次数、输入/输出 token、折算成人民币的金额，可一键重置累计。金额按**调用发生时刻**的峰谷价结算（峰时是 UTC 工作日 01:00–04:00 与 06:00–10:00），账本在 `~/.dsh/composer-quill-usage.json`，只有数字。
+**消耗**：面板显示今天与累计的调用次数、输入/输出 token、折算成人民币的金额，可一键重置累计。金额按**调用发生时刻**的峰谷价结算（峰时是 UTC 工作日 01:00–04:00 与 06:00–10:00），账本在 `<profile>/composer-quill-usage.json`，只有数字。
 
 **采纳反馈**：`Tab` 采纳、`Esc` 忽略、没采纳就发送都计入，用来重排「下一句」候选。
 
@@ -92,10 +92,11 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill   # 或从仓�
 
 ## 隐私
 
-- **只在本机**：补全请求走 DSH 已配置的模型路由，没有第三方服务器，也不上报。
-- **遮蔽凭据**：上下文出机器前，九类形状会被换成 `[redacted …]`——私钥块、AWS `AKIA…`、GitHub `ghp_` / `github_pat_`、OpenAI `sk-…`、Stripe、Slack `xox…`、JWT、`Bearer …`。
+- **不经过第三方中转**：补全请求走 DSH 已配置的模型路由，没有插件自己的服务器，也不上报。
+- **但内容会离开本机**：最近两轮对话、风格摘要与你的草稿会发给你配置的那家模型服务——它通常就是云端。本插件不控制那家服务如何保存或使用这些内容。
+- **遮蔽是尽力而为**：上下文出机器前，九类凭据形状会被换成 `[redacted …]`——私钥块、AWS `AKIA…`、GitHub `ghp_` / `github_pat_`、OpenAI `sk-…`、Stripe、Slack `xox…`、JWT、`Bearer …`。九类之外的秘密不会被识别。
 - **草稿同样遮蔽**：草稿里若出现密钥形状，也会换成 `[redacted …]`；解析层会丢弃带遮蔽标记的改写，所以宁可这次不给建议，也不把密钥发出去。
-- **三个本地文件**：诊断日志 `~/.dsh/composer-quill.log`、用量账本 `~/.dsh/composer-quill-usage.json`（只有计数与金额）、建议缓存 `~/.dsh/composer-quill-cache.json`（存建议正文，删掉即清空）。三者都在同一个目录，跟着 `DSH_PROFILE_DIR` / `DSH_HOME` 走。
+- **三个本地文件**：诊断日志 `composer-quill.log`、用量账本 `composer-quill-usage.json`（只有计数与金额）、建议缓存 `composer-quill-cache.json`（存建议正文，删掉即清空）。三者都在同一个状态目录：设了 profile 就是 `$DSH_PROFILE_DIR`，否则是 `$DSH_HOME`，都没有时才是 `~/.dsh`；测试与诊断可用 `DSH_COMPOSER_QUILL_STATE_DIR` 单独指定。建议正文是明文。
 - **接口有鉴权**：宿主侧要求本启动周期的令牌或同源浏览器请求；会话历史接口只认令牌。
 
 ## 它怎么工作
@@ -111,10 +112,10 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill   # 或从仓�
 
 ## 测试
 
-单测 149 项、浏览器场景 64 项，跑在 CI 里。场景覆盖快速连打、停顿出建议、取消、切会话、长文本排版这些真实节奏。
+单测 156 项、浏览器场景 64 项，跑在 CI 里。场景覆盖快速连打、停顿出建议、取消、切会话、长文本排版这些真实节奏。
 
 ```bash
-npm test                          # 148 项离线单测
+npm test                          # 156 项离线单测（含 client.js 是否与 client/ 同步）
 npm run test:ui                   # 64 条浏览器场景（自带模拟器）
 npm test -- --filter=transcript   # 只跑某个行为
 npm test -- --list                # 列出全部用例名
@@ -130,7 +131,7 @@ npm test -- --list                # 列出全部用例名
 
 ## 诊断
 
-出问题先看 `~/.dsh/composer-quill.log`，每行一条 JSONL。
+出问题先看 `<profile>/composer-quill.log`，每行一条 JSONL。
 
 - `request` / `cache-hit` / `cache-miss`：有没有真的调用模型；miss 会记下键的各个成分。
 - `result`：返回了几条候选；失败原因是 `skipped` / `empty-thread` / `wrong-language`。

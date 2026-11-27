@@ -1,31 +1,53 @@
 # 开发与验证
 
-> 适用版本：0.31.65 ｜ 无构建步骤：宿主与浏览器两端都是手写 ESM
+> 适用版本：0.32.0 ｜ 宿主是手写 ESM，没有构建；浏览器端源码在 `client/`，由 `npm run build:client` 拼成 `client.js`
 
 
 ## 1. 目录结构
 
 ```
 dsh-composer-quill/
-├── index.js            宿主：三条路由、缓存、模型调用、SSE
-├── client.js           浏览器：dock 行、灰字层、状态机、设置卡片
+├── index.js            宿主：五条路由、缓存、模型调用、SSE
+├── client.js           浏览器产物（自动生成，不要手改）
+├── client/             浏览器源码（八段，共用同一个闭包）
+│   ├── wrapper.js      `__ModuleLoader__.load({...})` 外壳 + `/* @@CLIENT_BODY@@ */`
+│   ├── prelude.js      常量、文案、token、HTTP 与 SSE 客户端
+│   ├── store.js        快照 store、闸门、dock 记账、建议状态机
+│   ├── config.js       设置、建议持久化、回合计数、采纳学习
+│   ├── geometry.js     建议失效判断、DOM 草稿、光标/行盒测量
+│   ├── ghost-layer.js  灰字层（`createGhostLayer`）
+│   ├── hooks.js        九个 hook：记账、播报、历史、画灰字、按键、请求、会话边界、打字、beacon
+│   ├── dock.js         GhostDock、用量面板、模型选择、设置卡片、图标
+│   └── entry.js        slot 注册、`apply`、`__test` 导出
+├── test/smoke-test.mjs 不依赖宿主的单元/集成测试（Node 直接跑）
 ├── cordis.patch.yml    把包插入 Cordis 启动图（用包名，不用相对路径）
 ├── package.json        dsh.bundle.patch / dsh.client 声明、engines 门禁
-├── locale/{zh,en}.json 插件市场的标题与描述（UI 文案在 client.js 内联）
+├── locale/{zh,en}.json 插件市场的标题与描述（UI 文案在 client/ 内联）
 ├── docs/               架构、协议、本文件
+│   ├── plans/          已完成的拆分/预算方案（历史记录）
+│   └── releases/       各版本的 release notes
 ├── dev/                开发工具（不随包发布）
-│   ├── harness/        浏览器模拟器（假 DSH + 假 fetch）
-│   └── verify_*.py     真机验证脚本（Playwright）
-├── smoke-test.mjs      不依赖宿主的单元/集成测试（Node 直接跑）
+│   ├── tools/          build-client.mjs（拼接产物）、summarize-log、rebuild-usage
+│   ├── probes/         一次性探针（真实模型 / 模拟器），不进 CI
+│   ├── verify/         Playwright 脚本：verify_daily.py、真机脚本、重试器
+│   ├── audit/          对抗性审计脚本
+│   └── harness/        浏览器模拟器（假 DSH + 假 fetch）
 └── icon.svg
+```
+
+`client.js` 是产物：宿主只服务「一个包一个 bundle」，包内 chunk 是构建器协议，押在上面不划算；`dev/tools/build-client.mjs` 做纯拼接（八段共用同一个闭包，语义与拆之前逐字节一致）。改了 `client/` 必须：
+
+```bash
+npm run build:client     # 重写 client.js
+npm run check:client     # 只检查是否同步（npm test 也会查）
 ```
 
 验证工具在 `dev/` 下（不随包发布，详见 [dev/README.md](../dev/README.md)）：
 
 ```
 dev/harness/         模拟器：src.js → esbuild → bundle.js（用 file:// 打开）
-dev/verify_daily.py  36 个行为场景（模拟器驱动）
-dev/verify_*.py      真机脚本：空行锚点、设置页、刷新复用、流式重绘……
+dev/verify/verify_daily.py  行为场景（模拟器驱动）
+dev/verify/*.py      真机脚本：空行锚点、设置页、刷新复用、流式重绘……
 ```
 
 ## 2. 安装与运行
@@ -42,11 +64,13 @@ $dsh = "$env:USERPROFILE\.dsh\desktop-preview-test\app\resources\runtime\cli\bin
 # 输出 dsh web: http://127.0.0.1:PORT/?token=…  → 用 Playwright 打开
 ```
 
-**改完客户端代码按 `Ctrl+R` 即可**（profile 里是指向本仓库的软链时）。验证方法不是看 `build`——不抬版本号时新旧包报同一个字符串——而是看 `apply` beacon 的 `detail`：它带上这版注册的挂载点。
+**改完客户端代码：先 `npm run build:client`，再按 `Ctrl+R`**（profile 里是指向本仓库的软链时）。验证方法不是看 `build`——不抬版本号时新旧包报同一个字符串——而是看 `apply` beacon 的 `detail`：它带上这版注册的挂载点。
 
 ```powershell
 Get-Content "$env:USERPROFILE\.dsh\composer-quill.log" -Tail 20 | Select-String '"build"'
 ```
+
+日志的真实位置是状态目录：设了 profile 就在 `$env:DSH_PROFILE_DIR` 下（桌面端通常是 `~/.dsh/profiles/desktop`），否则是 `$env:DSH_HOME`，都没有时才是 `~/.dsh`。测试或诊断可以用 `DSH_COMPOSER_QUILL_STATE_DIR` 把它整个搬走。
 
 ### 2.1 日常调试：让桌面端直接吃本地目录
 
@@ -57,7 +81,7 @@ Get-Content "$env:USERPROFILE\.dsh\composer-quill.log" -Tail 20 | Select-String 
 # 依赖会变成 link:C:/…/dsh-composer-quill，node_modules 里是指向仓库的链接
 ```
 
-之后：改代码 → `node smoke-test.mjs` → **`Ctrl+R`**。不用 `npm publish`，也不用重装。
+之后：改代码 → `npm test`（或 `node test/smoke-test.mjs`）→ **`Ctrl+R`**。不用 `npm publish`，也不用重装。
 
 两条纪律，都是踩过的坑：
 
@@ -81,16 +105,19 @@ npm run test:log -- 1             # 汇总最近 1 小时的诊断日志
 
 ### 3.1 单测（`npm test`）
 
-不依赖 DSH，直接用假的 `ctx` / 假 `res` 驱动真实代码。136 条用例分十七组：
+不依赖 DSH，直接用假的 `ctx` / 假 `res` 驱动真实代码。156 条用例分二十组（`npm test -- --list` 是权威清单，这里只列新增/关键的）：
 
 - **host: pure helpers** — 解析器、`transcriptOf`、`sessionDigest`、语言闸、输入清洗、缓存开关
-- **host: routes and streaming** — 鉴权矩阵、SSE 帧时序、缓存命中、单飞、日志轮转
+- **host: compose prompt / one question for both transports** — `composePlan()` 的判定；同一个草稿走 SSE 与走 JSON 时系统提示词、用户提示词、`maxTokens`、`reasoningEffort` 必须逐字相同；JSON 重试并入正在跑的流
+- **host: routes and streaming** — 鉴权矩阵、SSE 帧时序、缓存命中、单飞、日志轮转、状态目录规则
 - **client: factory, slots, requests** — 工厂与两个 slot、`followRemainder`、建议持久化、回合计数
 - **client: audit findings** — 采纳反馈重排、切会话复用、abort 监听器泄漏等审计结论
 
 每行结尾带耗时，失败会在最后汇总点名；`ALL CHECKS PASSED` 是唯一通过标志。
 
-`__test` 导出的 47 个内部函数全部至少被引用一次（29 个 host + 18 个 client），改内部实现时不必猜哪条用例在守它。
+第一条用例会核对 `client.js` 是否与 `client/` 的拼接结果逐字节相同——手改产物或忘记 `npm run build:client` 都会在这里变红。
+
+单测默认把状态文件钉在一个临时目录（`DSH_COMPOSER_QUILL_STATE_DIR`），不会写进你真实的 profile。
 
 ### 3.2 模拟器（`npm run test:ui`）
 
@@ -100,7 +127,7 @@ npm run test:log -- 1             # 汇总最近 1 小时的诊断日志
 cd dev/harness; node node_modules/esbuild/bin/esbuild src.js --bundle --format=iife --target=chrome120 --outfile=bundle.js
 ```
 
-57 条断言（S1–S49）覆盖：逐字输入、快速连打、Esc 抑制、失败重试、长草稿、切会话、超短草稿、空行锚点、历史补全、整条采纳、清空重弹、行常驻、覆盖区间零调用、流式增长、采纳反馈重排、切回会话复用，以及三条按真实使用节奏写的回归：
+64 条断言（S1–S53）覆盖：逐字输入、快速连打、Esc 抑制、失败重试、长草稿、切会话、超短草稿、空行锚点、历史补全、整条采纳、清空重弹、行常驻、覆盖区间零调用、流式增长、采纳反馈重排、切回会话复用，以及几条按真实使用节奏写的回归：
 
 - **S23 快速连打期间的取消上限** — 打字速度超过模型首字节时，取消次数不得超过「时长 ÷ 重触发间隔 + 2」
 - **S24 停手后灰字稳定** — 停手后必须出灰字，且 2.4 秒内既不消失也不再发请求
@@ -108,6 +135,7 @@ cd dev/harness; node node_modules/esbuild/bin/esbuild src.js --bundle --format=i
 - **S26 长灰字不溢出输入框** — 长尾巴会换行。建议层嵌在输入框内，可绘制范围取最近的会裁切祖先（滚动视口，或圆角卡片），不是编辑器本身：编辑器比可见卡片高，用它的底边等于没裁
 - **S27 对话框打开时灰字不穿透** — 建议层嵌在输入框内部后，宿主的层叠顺序自然把它压在对话框下面；`[role=dialog]` 检测仍保留作兜底（灰字落在 body 上的旧路径）
 - **S28 换行后回到行首** — 灰字从光标处开始，换行后必须回到内容左缘（整宽块 + 首行浮动占位实现），否则每行都挤在光标那一列
+- **S53 切会话掐掉在飞的补全请求** — 首字 2.5 秒的补写请求在飞时切会话：切换前后的 `aborts()` 差值必须 ≥1（不能只靠打字阶段本来就有的取消），且切后不得再为旧草稿发请求。这条钉的是 issue #7 的结果，不是某一行 `cancel()`
 
 假模型可以调慢，这是 S23–S25 的依据：
 
@@ -119,7 +147,7 @@ h("resetMetrics()")                              // 清零计数
 
 改动 `src.js` **或 `client.js`** 之后都要重建 bundle，否则跑的还是旧代码——这条踩过一次，现象是"修了却仍然失败"。
 
-### 3.3 真机脚本（`python dev/verify_*.py <url>`）
+### 3.3 真机脚本（`python dev/verify/verify_*.py <url>`）
 
 每个脚本自带断言与截图，按需跑：
 
@@ -140,7 +168,7 @@ h("resetMetrics()")                              // 清零计数
 
 ```bash
 npm run test:ui:retry          # 最多 2 次，抖动记入 dev/flake-ledger.json
-python dev/verify_with_retry.py --attempts 3 --threshold 2
+python dev/verify/verify_with_retry.py --attempts 3 --threshold 2
 ```
 
 判定规则：
@@ -175,7 +203,7 @@ DSH_QUILL_CONTEXT=full
 只跑到第 N 条就停，用来定位「从某条开始才失败」的问题：
 
 ```bash
-DSH_SCENARIO_LIMIT=14 python dev/verify_daily.py
+DSH_SCENARIO_LIMIT=14 python dev/verify/verify_daily.py
 ```
 
 它会打印「已跑 14 条」，退出码 0。二分比读代码便宜得多。
@@ -221,12 +249,14 @@ DSH_SCENARIO_LIMIT=14 python dev/verify_daily.py
 | 变量 | 作用 |
 | --- | --- |
 | `DSH_COMPOSER_QUILL_NO_CACHE=1` | 关闭宿主磁盘缓存（读与写都跳过）。单测默认开启，避免污染真实缓存 |
+| `DSH_COMPOSER_QUILL_STATE_DIR` | 把日志/账本/缓存钉到一个目录（优先级最高）。单测默认指向临时目录 |
+| `DSH_QUILL_CONTEXT=full` | 回到旧的大上下文预算（见 3.4） |
 
 ## 5. 发布清单
 
-1. 改 `client.js` 的 `BUILD` 与 `package.json` 的 `version`（必须同步，`build` 是排障时的版本凭证）。
-2. `node smoke-test.mjs` 全绿。
-3. `python verify_daily.py` 全绿（改过 `_harness/src.js` 要先重建 bundle）。
+1. 改 `client/prelude.js` 的 `BUILD` 与 `package.json` 的 `version`（必须同步，`build` 是排障时的版本凭证），再 `npm run build:client`。
+2. `npm test` 全绿（或 `node test/smoke-test.mjs`）。
+3. `npm run test:ui` 全绿（改过 `client/` 先 `npm run build:client`；改过 `dev/harness/src.js` 会由脚本重建 bundle）。
 4. 相关真机脚本跑一遍，确认没有回归。
 5. 更新 `docs/` 与 `README.md` 的变更表。
 6. 提醒使用者**彻底退出 DSH 再打开**。
