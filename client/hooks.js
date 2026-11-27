@@ -568,7 +568,7 @@
         }, live.timeoutMs || CLIENT_TIMEOUT_MS)
         active.signal.addEventListener('abort', () => clearTimeout(deadline), { once: true })
         Promise.resolve()
-          .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode }, active.signal))
+          .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode, attachments: live.attachments ?? [] }, active.signal))
           .then((body) => {
             if (active.signal.aborted) return
             markLive()
@@ -826,13 +826,24 @@
     /** Typing drives the compose request: debounced on the settled draft. */
     function useTypingRequest(passed) {
       const {
-        draft, composeEnabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey,
+        draft, composeEnabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey, latest,
         ghost, hydrateStored, report, request, composing, refs,
       } = passed
       const { lastRequested } = refs
       // The draft alone is not the question: the same sentence with a picture
       // attached asks something else. Every "already asked" test below uses this.
       const signature = requestSignature(draft, attachmentKey)
+      // What the composer held when this hook last looked. The Session effect asks
+      // on mount; only a later change is a new question.
+      const seenAttachmentKey = React.useRef(attachmentKey)
+      React.useEffect(() => {
+        const prior = seenAttachmentKey.current
+        seenAttachmentKey.current = attachmentKey
+        if (!nextAskForAttachments({ priorKey: prior, attachmentKey, live: latest.current })) return
+        // Candidates on screen were written for the old contents of the composer.
+        ghost.clear(latest.current.sessionId ?? undefined)
+        request('next', '', true)
+      }, [attachmentKey, ghost, request])
       // The attachments the request in flight was sent with. A different set means
       // its answer was written without them, so it can no longer apply.
       const askedKey = signatureAttachmentKey(lastRequested.current)

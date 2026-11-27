@@ -204,6 +204,22 @@ const COVERED_DEBOUNCE_MS = 1200
       return at === -1 ? '' : signature.slice(at + 1)
     }
 
+    /**
+     * An empty composer that just gained, lost or swapped an attachment is a new
+     * "what would I say next" question: the candidates on screen were written when
+     * the composer held something else. Pure, so the rule can be tested on its own.
+     */
+    function nextAskForAttachments(input) {
+      const prior = typeof input?.priorKey === 'string' ? input.priorKey : null
+      const key = typeof input?.attachmentKey === 'string' ? input.attachmentKey : ''
+      // null means nothing has been observed yet: mounting is not a change.
+      if (prior === null || prior === key) return false
+      const live = input?.live ?? {}
+      if (live.enabled !== true || live.sessionId === null || live.running === true || live.manual === true) return false
+      if (live.nextEnabled === false) return false
+      return typeof live.draft === 'string' && live.draft.trim() === ''
+    }
+
     /** Read an SSE compose response, falling back to a whole JSON body. */
     /** Headers every request needs, so the two transports cannot drift apart. */
     function requestHeaders(accept) {

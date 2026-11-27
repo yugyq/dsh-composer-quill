@@ -26,6 +26,9 @@
       const hydratedFor = React.useRef('')
       const hydrateStored = (kind, forDraft) => {
         if (!enabled || sessionId === null) return false
+        // A saved suggestion was written without the composer's attachments: with
+        // something attached it would answer an older question.
+        if (kind === 'next' && (latest.current.attachmentKey ?? '') !== '') return false
         const marker = `${kind}|${forDraft}`
         if (hydratedFor.current === marker) return false
         const items = loadSuggestion(sessionId, kind, forDraft)
@@ -116,7 +119,7 @@
 
       // Typing drives the compose request (debounced on the settled draft).
       useTypingRequest({
-        draft, enabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey,
+        draft, enabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey, latest,
         ghost, hydrateStored, report, request, composing, composeEnabled, refs: { lastRequested },
       })
 

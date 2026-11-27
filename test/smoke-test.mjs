@@ -1183,6 +1183,27 @@ await checkAsync('an idle Session requests exactly one next-message prediction',
   assert.equal(prediction.length, 1, `next calls: ${JSON.stringify(calls)}`)
 })
 
+await checkAsync('an empty composer with a picture asks next with the picture', async () => {
+  calls.length = 0
+  effectQueue = []
+  const port = moduleExports.__test.attachmentPort({
+    conversation: {
+      resolveDraftAttachments: () => [{ kind: 'image', id: 'i1', file: { name: 'shot.png', size: 2048 } }],
+      fileUploads: { getSnapshot: () => ({ i1: { status: 'ready', receiptId: 'r1' } }) },
+    },
+  })
+  renderDock(props({
+    session: { sessionId: 's-next-att', running: false },
+    input: { draft: '', attachmentIds: ['i1'] },
+    attachments: port,
+  }))
+  for (const run of effectQueue) run()
+  await wait(500)
+  const next = calls.filter((call) => call.mode === 'next' && call.sessionId === 's-next-att')
+  assert.equal(next.length, 1, `next calls: ${JSON.stringify(calls)}`)
+  assert.deepEqual(next[0].attachments, [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1' }])
+})
+
 await checkAsync('typing requests one compose call carrying the draft', async () => {
   calls.length = 0
   effectQueue = []
@@ -1216,6 +1237,23 @@ await checkAsync('a compose request carries the attachments, never their bytes',
   assert.equal(compose.length, 1, `calls: ${JSON.stringify(calls)}`)
   assert.deepEqual(compose[0].attachments, [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1' }])
   assert.equal(JSON.stringify(compose[0]).includes('base64'), false, 'the picture itself never goes through this route')
+})
+
+check('a picture in an empty composer is a new next-message question', () => {
+  const { nextAskForAttachments } = moduleExports.__test
+  const live = (over) => ({ enabled: true, sessionId: 's1', running: false, manual: false, nextEnabled: true, draft: '', ...over })
+  const ask = (over) => nextAskForAttachments({ priorKey: '', attachmentKey: 'image:r1:12', live: live({}), ...over })
+  assert.equal(ask({}), true, 'a picture added to an empty composer re-asks')
+  assert.equal(ask({ priorKey: 'image:r9:12' }), true, 'so does a swapped one')
+  assert.equal(ask({ priorKey: 'image:r1:12', attachmentKey: '' }), true, 'and removing it')
+  assert.equal(ask({ priorKey: 'image:r1:12' }), false, 'the same picture is the same question')
+  assert.equal(ask({ priorKey: null }), false, 'mounting is not a change')
+  assert.equal(ask({ live: live({ draft: '帮我' }) }), false, 'a draft drives the compose path instead')
+  assert.equal(ask({ live: live({ nextEnabled: false }) }), false, 'next-message predictions are switched off')
+  assert.equal(ask({ live: live({ running: true }) }), false, 'the assistant is answering')
+  assert.equal(ask({ live: live({ entry: true, manual: true }) }), false, 'only manual triggers are allowed')
+  assert.equal(ask({ live: live({ sessionId: null }) }), false, 'no Session, nothing to ask about')
+  assert.equal(ask({ live: live({ enabled: false }) }), false, 'the whole plugin is off')
 })
 
 check('a draft and its attachments make one signature', () => {
@@ -2740,6 +2778,15 @@ group('client: gates')
     assert.equal(api.gateFor(base({})).key, 'compose|帮我把这段日志')
   })
 
+  check('an attachment makes an empty composer a new next question', () => {
+    const picture = 'image:r1:2048'
+    const next = (over) => base({ mode: 'next', forDraft: '', live: live({ draft: '', draftEmpty: true }), ...over })
+    // Same empty composer, new picture: the dedupe window must not swallow it.
+    assert.equal(gate(next({ attachmentKey: picture, lastCall: { key: 'next|', at: 9_700 } })), 'G7')
+    // The same picture asked again stays one question.
+    assert.equal(gate(next({ attachmentKey: picture, lastCall: { key: `next||${picture}`, at: 9_700 } })), 'G4a')
+  })
+
   check('the dedupe gate asks to be rescheduled, not dropped', () => {
     const verdict = api.gateFor(base({ lastCall: { key: 'compose|帮我把这段日志', at: 9_700 } }))
     assert.equal(verdict.gate, 'G4a')
@@ -3655,6 +3702,47 @@ group('host: attachments')
     }
     return []
   }
+
+  await checkAsync('a next-message suggestion is looking at the same picture', async () => {
+    const { predict } = host.__test
+    const imageRef = { attachmentId: 'a11', mediaType: 'image/png', bytes: 12, width: 4, height: 4 }
+    const services = { fileUploads: { resolve: () => ({ type: 'image', attachment: imageRef, encodedBytes: 12 }) } }
+    const seen = []
+    const events = [
+      { type: 'request/header', data: { header: { config: { provider: 'p', model: 'next-model' } } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '帮我把这段日志整理一下' }] } },
+      { type: 'assistant/message', data: { content: [{ type: 'text', text: '好的。' }] } },
+    ]
+    const session = { id: 's-next-att', requestHeader: () => ({ config: { provider: 'p', model: 'next-model' } }), snapshotEvents: () => events }
+    const ctx = {
+      get: (name) => services[name],
+      agents: { get: () => ({ session }) },
+      llm: {
+        async *stream(options) {
+          seen.push(options)
+          yield { type: 'text-delta', text: '["这张截图里报的什么错？","帮我看看截图里的报错","截图里那个 409 怎么处理"]' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      },
+    }
+    const base = {
+      sessionId: 's-next-att', session, events, hasTurns: true, kind: 'next', cleanDraft: '',
+      locale: 'zh-CN', forced: '', signal: new AbortController().signal,
+    }
+    const withPicture = [{ kind: 'image', name: 'shot.png', bytes: 12, receiptId: 'r-img' }]
+    await predict(ctx, { ...base, attachments: withPicture }, new AbortController().signal)
+    assert.equal(seen.length >= 1, true, 'the empty composer still asks what comes next')
+    const content = seen[0].messages[0].content
+    assert.equal(content[0].type, 'image', 'a picture in the composer reaches the next-message prompt too')
+    assert.equal(content[content.length - 1].type, 'text', 'the prompt stays last')
+    const note = content.map((part) => (typeof part?.text === 'string' ? part.text : '')).find((text) => text.includes('Attachments in this message'))
+    assert.equal(typeof note, 'string', 'and a note says what the composer is holding')
+
+    // The same empty composer with a different picture is a different question.
+    const before = seen.length
+    await predict(ctx, { ...base, attachments: [{ ...withPicture[0], receiptId: 'r-img2' }] }, new AbortController().signal)
+    assert.equal(seen.length, before + 1, 'a swapped picture must not be answered from the cache')
+  })
 
   await checkAsync('the stream sends the picture and still ends on one line', async () => {
     // The trace file follows the directory the module resolved at import; env moved

@@ -2367,7 +2367,9 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0,
   const effectiveRoute = routeOf(override) ?? routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx)
   // Same question means the same draft over the same attachments; anything else is
   // a different answer. This transport pays for the same model call as the stream.
-  const attached = kind === 'compose' && Array.isArray(attachments) ? attachments : []
+  // A next-message suggestion is about what the user is holding too: a composer
+  // with a screenshot in it invites a different sentence than an empty one.
+  const attached = Array.isArray(attachments) ? attachments : []
   const stamp = attachmentStamp(attached)
   const key = cacheKey(
     sessionId,
@@ -2505,9 +2507,7 @@ async function computeShortPrediction(ctx, session, events, options) {
 }
 
 async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, signal, route: override, attachments = [] }) {
-  // Only a compose call can be about what the user is holding; a next-message
-  // suggestion is about what they said before.
-  const attached = kind === 'compose' ? await attachmentContent(ctx, session?.id ?? session?.sessionId ?? null, attachments) : { blocks: [], note: '' }
+  const attached = await attachmentContent(ctx, session?.id ?? session?.sessionId ?? null, attachments)
   const lead = attached.note === '' ? attached.blocks : [...attached.blocks, { type: 'text', text: attached.note }]
   if (kind === 'next') {
     // The next-message window is built here, not before the branch: a compose call
@@ -2525,7 +2525,7 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
       'Write as the USER, not as the assistant: never continue or paraphrase the assistant reply, and never switch language because it uses another one.',
       'Return the JSON object of candidate next user messages.',
     ].filter(Boolean).join('\n\n')
-    const { text, route } = await ask(ctx, session, events, NEXT_RULES, prompt, signal, undefined, 'next', override)
+    const { text, route } = await ask(ctx, session, events, NEXT_RULES, prompt, signal, undefined, 'next', override, lead)
     const lastUser = [...events].reverse().find((event) => event?.type === 'user/message')
     const lastUserText = textOfBlocks(lastUser?.data?.content ?? lastUser?.data?.message?.content)
     let candidates = rankCandidates(parseCandidates(text), { profile, lastAssistant: assistant, lastUser: lastUserText, locale, forced })
@@ -2559,6 +2559,7 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
           undefined,
           'next',
           override,
+          lead,
         )
         const more = rankCandidates(parseCandidates(again.text), { profile, lastAssistant: assistant, lastUser: lastUserText, locale, forced })
         const merged = [...candidates]

@@ -228,6 +228,22 @@ const COVERED_DEBOUNCE_MS = 1200
       return at === -1 ? '' : signature.slice(at + 1)
     }
 
+    /**
+     * An empty composer that just gained, lost or swapped an attachment is a new
+     * "what would I say next" question: the candidates on screen were written when
+     * the composer held something else. Pure, so the rule can be tested on its own.
+     */
+    function nextAskForAttachments(input) {
+      const prior = typeof input?.priorKey === 'string' ? input.priorKey : null
+      const key = typeof input?.attachmentKey === 'string' ? input.attachmentKey : ''
+      // null means nothing has been observed yet: mounting is not a change.
+      if (prior === null || prior === key) return false
+      const live = input?.live ?? {}
+      if (live.enabled !== true || live.sessionId === null || live.running === true || live.manual === true) return false
+      if (live.nextEnabled === false) return false
+      return typeof live.draft === 'string' && live.draft.trim() === ''
+    }
+
     /** Read an SSE compose response, falling back to a whole JSON body. */
     /** Headers every request needs, so the two transports cannot drift apart. */
     function requestHeaders(accept) {
@@ -2420,7 +2436,7 @@ const COVERED_DEBOUNCE_MS = 1200
         }, live.timeoutMs || CLIENT_TIMEOUT_MS)
         active.signal.addEventListener('abort', () => clearTimeout(deadline), { once: true })
         Promise.resolve()
-          .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode }, active.signal))
+          .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode, attachments: live.attachments ?? [] }, active.signal))
           .then((body) => {
             if (active.signal.aborted) return
             markLive()
@@ -2678,13 +2694,24 @@ const COVERED_DEBOUNCE_MS = 1200
     /** Typing drives the compose request: debounced on the settled draft. */
     function useTypingRequest(passed) {
       const {
-        draft, composeEnabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey,
+        draft, composeEnabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey, latest,
         ghost, hydrateStored, report, request, composing, refs,
       } = passed
       const { lastRequested } = refs
       // The draft alone is not the question: the same sentence with a picture
       // attached asks something else. Every "already asked" test below uses this.
       const signature = requestSignature(draft, attachmentKey)
+      // What the composer held when this hook last looked. The Session effect asks
+      // on mount; only a later change is a new question.
+      const seenAttachmentKey = React.useRef(attachmentKey)
+      React.useEffect(() => {
+        const prior = seenAttachmentKey.current
+        seenAttachmentKey.current = attachmentKey
+        if (!nextAskForAttachments({ priorKey: prior, attachmentKey, live: latest.current })) return
+        // Candidates on screen were written for the old contents of the composer.
+        ghost.clear(latest.current.sessionId ?? undefined)
+        request('next', '', true)
+      }, [attachmentKey, ghost, request])
       // The attachments the request in flight was sent with. A different set means
       // its answer was written without them, so it can no longer apply.
       const askedKey = signatureAttachmentKey(lastRequested.current)
@@ -2816,6 +2843,9 @@ const COVERED_DEBOUNCE_MS = 1200
       const hydratedFor = React.useRef('')
       const hydrateStored = (kind, forDraft) => {
         if (!enabled || sessionId === null) return false
+        // A saved suggestion was written without the composer's attachments: with
+        // something attached it would answer an older question.
+        if (kind === 'next' && (latest.current.attachmentKey ?? '') !== '') return false
         const marker = `${kind}|${forDraft}`
         if (hydratedFor.current === marker) return false
         const items = loadSuggestion(sessionId, kind, forDraft)
@@ -2906,7 +2936,7 @@ const COVERED_DEBOUNCE_MS = 1200
 
       // Typing drives the compose request (debounced on the settled draft).
       useTypingRequest({
-        draft, enabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey,
+        draft, enabled, sessionId, running, settings, state, dockBooking, sendDock, attachmentKey, latest,
         ghost, hydrateStored, report, request, composing, composeEnabled, refs: { lastRequested },
       })
 
@@ -3664,6 +3694,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
