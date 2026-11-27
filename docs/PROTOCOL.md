@@ -28,7 +28,7 @@
   "sessionId": "session-…",
   "mode": "next" | "compose",
   "draft": "帮我看看",
-  "attachments": [{ "kind": "image", "name": "shot.png", "bytes": 2048, "receiptId": "…" }]
+  "attachments": [{ "kind": "image", "name": "shot.png", "bytes": 2048, "receiptId": "…", "status": "ready" }]
 }
 ```
 
@@ -37,7 +37,8 @@
 | `sessionId` | 必填，DSH 会话 id |
 | `mode` | `compose` 且 `draft` 非空 → 补写；否则按 `next` 处理（兼容旧客户端传入 `normalize`/`continuation`） |
 | `draft` | 草稿，服务端截断到 6000 字符；`compose` 且为空返回 400 |
-| `attachments` | 可选，最多 8 条。只有描述，没有字节：`kind`（`image`/`file`）、`name`（≤120 字符）、`bytes`、`receiptId`（浏览器上传后宿主给出的回执，≤200 字符）。宿主用回执换成 `ImageBlock` 或文件摘录；回执无效时模型会被告知「看不到」。`attachments` 参与缓存键：同一句话配不同图片是两个不同的问题 |
+| `attachmentTotal` | 可选，整数。输入框里一共有几个附件——超过 8 条时，多出来的不描述，但这个数字进缓存键：删掉第 9 张图和删掉不存在的图不是同一个问题 |
+| `attachments` | 可选，最多 8 条（第 9 条起不描述，但用 `attachmentTotal` 报出总数，好让模型知道自己少看了几个）。只有描述，没有字节：`kind`（`image`/`file`）、`name`（≤120 字符）、`bytes`、`receiptId`（浏览器上传后宿主给出的回执，≤200 字符）、`status`（`ready`/`uploading`/`error`/`missing`，说明回执为什么没有——上传中被等一等，被拒则要让用户重新添加）。宿主用回执换成 `ImageBlock` 或文件摘录；回执无效时模型会被告知「看不到」。`attachments` 参与缓存键：同一句话配不同图片是两个不同的问题 |
 
 请求体上限 48 KB；超时 30 s。附件本身不经过这条路由——它由浏览器上传、宿主保管。
 

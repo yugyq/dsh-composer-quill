@@ -58,8 +58,9 @@
       const attached = typeof attachments?.describe === 'function' ? attachments.describe(input) : []
       // Attachments are part of the question, not decoration: swapping a picture
       // must reach the same request path a keystroke does.
-      const attachmentKey = typeof attachments?.key === 'function' ? attachments.key(attached) : ''
-      latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, attachments: attached, attachmentKey, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
+      const attachmentTotal = typeof attachments?.total === 'function' ? attachments.total() : attached.length
+      const attachmentKey = typeof attachments?.key === 'function' ? attachments.key(attached, attachmentTotal) : ''
+      latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, attachments: attached, attachmentTotal, attachmentKey, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
       const layer = React.useRef(null)
       if (layer.current === null) layer.current = createGhostLayer()
       const ghostLayer = layer.current

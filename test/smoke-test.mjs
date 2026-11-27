@@ -1060,11 +1060,28 @@ check('the composer says what it is holding, and only that', () => {
   const port = attachmentPort({ get: (name) => (name === 'conversation' ? conversation : undefined) })
   const described = port.describe({ attachmentIds: ['i1', 'i2'] })
   assert.equal(described.length, 2)
-  assert.deepEqual(described[0], { kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1' })
+  assert.deepEqual(described[0], { kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1', status: 'ready' })
   assert.equal(described[1].kind, 'file')
   assert.equal(described[1].receiptId, '', 'a file still uploading has no receipt yet')
+  assert.equal(described[1].status, 'uploading', 'and says why')
+
+  // A refused upload is a dead end, not a wait: the Host has to be able to tell the
+  // model which of the two it is, or the suggestion asks the user to wait forever.
+  const refused = {
+    resolveDraftAttachments: () => [{ kind: 'file', id: 'f1', file: { name: 'server.log', size: 900 } }],
+    fileUploads: { getSnapshot: () => ({ f1: { status: 'error', message: 'too large' } }) },
+  }
+  const refusal = attachmentPort({ get: (name) => (name === 'conversation' ? refused : undefined) })
+    .describe({ attachmentIds: ['f1'] })
+  assert.equal(refusal[0].status, 'error')
+  assert.equal(refusal[0].receiptId, '')
   const many = port.describe({ attachmentIds: Array.from({ length: 12 }, (_, i) => `i${i}`) })
   assert.equal(many.length, 8, 'one message carries at most eight')
+  // The four that do not fit are still the user's: the Host is told how many exist,
+  // and the fingerprint changes when one of them is removed.
+  assert.equal(port.total(), 12, 'the composer holds twelve')
+  assert.ok(port.key(many, 12).endsWith('+12'), `the key carries the drop: ${port.key(many, 12).slice(-12)}`)
+  assert.equal(port.key(many, 8).endsWith('+12'), false, 'no suffix when nothing is dropped')
 
   // The runtime gates direct service access on the plugin's declared inject: an
   // undeclared `ctx.conversation` throws instead of reading undefined. That throw
@@ -1201,7 +1218,7 @@ await checkAsync('an empty composer with a picture asks next with the picture', 
   await wait(500)
   const next = calls.filter((call) => call.mode === 'next' && call.sessionId === 's-next-att')
   assert.equal(next.length, 1, `next calls: ${JSON.stringify(calls)}`)
-  assert.deepEqual(next[0].attachments, [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1' }])
+  assert.deepEqual(next[0].attachments, [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1', status: 'ready' }])
 })
 
 await checkAsync('typing requests one compose call carrying the draft', async () => {
@@ -1235,7 +1252,7 @@ await checkAsync('a compose request carries the attachments, never their bytes',
   await wait(900)
   const compose = calls.filter((call) => call.mode === 'compose' && call.sessionId === 's-attach-req')
   assert.equal(compose.length, 1, `calls: ${JSON.stringify(calls)}`)
-  assert.deepEqual(compose[0].attachments, [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1' }])
+  assert.deepEqual(compose[0].attachments, [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1', status: 'ready' }])
   assert.equal(JSON.stringify(compose[0]).includes('base64'), false, 'the picture itself never goes through this route')
 })
 
@@ -1267,8 +1284,8 @@ check('a draft and its attachments make one signature', () => {
 
 check('the attachment fingerprint changes when the picture does', () => {
   const { key } = moduleExports.__test.attachmentPort(null)
-  const shot = [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1' }]
-  const same = [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1' }]
+  const shot = [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1', status: 'ready' }]
+  const same = [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1', status: 'ready' }]
   const moved = [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r2' }]
   const file = [{ kind: 'file', name: 'notes.txt', bytes: 12, receiptId: '' }]
   assert.equal(key(shot), 'image:r1:2048')
@@ -3603,7 +3620,7 @@ group('host: stream telemetry')
 group('host: attachments')
 
 {
-  const { normalizeAttachments, attachmentStamp, attachmentContent, cacheKey, composeStream, formatBytes } = host.__test
+  const { normalizeAttachments, attachmentStamp, attachmentContent, cacheKey, composeStream, formatBytes, readFileInsight } = host.__test
 
   check('an attachment list is read defensively and capped', () => {
     assert.deepEqual(normalizeAttachments(null), [])
@@ -3611,18 +3628,21 @@ group('host: attachments')
     const many = Array.from({ length: 12 }, (_, i) => ({ kind: i % 2 === 0 ? 'file' : 'image', name: `n${i}`, bytes: 10 + i, receiptId: `r${i}` }))
     const kept = normalizeAttachments(many)
     assert.equal(kept.length, 8, 'eight is the most one message may carry')
-    assert.deepEqual(kept[0], { kind: 'file', name: 'n0', bytes: 10, receiptId: 'r0' })
+    assert.deepEqual(kept[0], { kind: 'file', name: 'n0', bytes: 10, receiptId: 'r0', status: 'missing' })
     const messy = normalizeAttachments([
       'not an object',
       { kind: 'image', name: 7, bytes: -3, receiptId: 42 },
       { kind: 'video', name: 'x'.repeat(400), bytes: 1.9, receiptId: 'y'.repeat(400) },
     ])
     assert.equal(messy.length, 2, 'anything that is not an object is dropped')
-    assert.deepEqual(messy[0], { kind: 'image', name: '', bytes: 0, receiptId: '' })
+    assert.deepEqual(messy[0], { kind: 'image', name: '', bytes: 0, receiptId: '', status: 'missing' })
     assert.equal(messy[1].kind, 'file', 'an unknown kind is treated as a file')
     assert.equal(messy[1].name.length, 120)
     assert.equal(messy[1].receiptId.length, 200)
     assert.equal(messy[1].bytes, 1, 'a fractional size is floored')
+    // The upload state survives the trip or the note cannot tell a refusal from a wait.
+    assert.equal(normalizeAttachments([{ kind: 'file', name: 'a.log', bytes: 1, status: 'error' }])[0].status, 'error')
+    assert.equal(normalizeAttachments([{ kind: 'file', name: 'a.log', bytes: 1, status: 'later' }])[0].status, 'missing')
   })
 
   check('the attachment set is part of the cache identity', () => {
@@ -3729,10 +3749,71 @@ group('host: attachments')
     const read = await attachmentContent(ctx, 's-a', [{ kind: 'image', name: 'shot.png', bytes: 10, receiptId: 'gone' }])
     assert.deepEqual(read.blocks, [], 'nothing is invented for a receipt that does not resolve')
     assert.ok(read.note.includes('shot.png'))
-    assert.ok(read.note.includes('has not received yet'), 'the model is told why it is missing')
+    assert.ok(read.note.includes('has not received'), 'the model is told why it is missing')
     assert.ok(read.note.includes('Do not describe or quote an attachment you cannot see'), 'and what not to do about it')
+    assert.equal(read.seen, 0, 'nothing resolved')
+    assert.equal(read.unseen, 1, 'one is missing')
     const empty = await attachmentContent(ctx, 's-a', [])
-    assert.deepEqual(empty, { blocks: [], note: '' })
+    assert.deepEqual(empty, { blocks: [], note: '', seen: 0, unseen: 0 })
+  })
+
+  await checkAsync('the tenth attachment is named, not dropped', async () => {
+    const services = { fileUploads: { resolve: () => undefined }, attachments: {} }
+    const ctx = { get: (name) => services[name], agents: { get: () => ({ session: { id: 's-a' } }) } }
+    const eight = Array.from({ length: 8 }, (_, index) => ({ kind: 'file', name: `f${index}.log`, bytes: 10, receiptId: `r${index}` }))
+    const capped = await attachmentContent(ctx, 's-a', eight, 10)
+    assert.ok(capped.note.includes('holds 2 more attachments'), `note names the drop: ${capped.note.slice(-160)}`)
+    assert.ok(capped.note.includes('ask the user if they matter'))
+    assert.equal(capped.seen, 0, 'none of them resolved, and the note says so')
+    const exact = await attachmentContent(ctx, 's-a', eight, 8)
+    assert.equal(exact.note.includes('more attachments'), false, 'nothing is said when nothing is dropped')
+    // Dropping the tenth file is a different question, so it must not reuse the key.
+    assert.equal(attachmentStamp(eight, 10), `${attachmentStamp(eight, 8)}+10`)
+    assert.notEqual(cacheKey('s-a', 'compose', '这段日志', [], { provider: 'p', model: 'm' }, '', 0, '', attachmentStamp(eight, 10)),
+      cacheKey('s-a', 'compose', '这段日志', [], { provider: 'p', model: 'm' }, '', 0, '', attachmentStamp(eight, 8)))
+  })
+
+  await checkAsync('a file that grew after it was uploaded is not quoted as whole', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'quill-grow-'))
+    const path = join(dir, 'grew.log')
+    writeFileSync(path, 'first line\n'.repeat(400))
+    const store = { fileHostPath: () => path }
+    const read = await readFileInsight(store, { name: 'grew.log', bytes: 40 })
+    assert.equal(read.mode, 'full')
+    assert.equal(read.clipped, true, 'the declared size was 40 bytes, the file is longer')
+    const honest = await readFileInsight(store, { name: 'grew.log', bytes: statSync(path).size })
+    assert.equal(honest.clipped, false, 'a file that fits is quoted whole once its real size is known')
+    const short = join(dir, 'short.txt')
+    writeFileSync(short, 'only two lines\nand done\n')
+    const whole = await readFileInsight({ fileHostPath: () => short }, { name: 'short.txt', bytes: statSync(short).size })
+    assert.equal(whole.mode, 'full')
+    assert.equal(whole.clipped, false, 'a small file that fits is quoted without a hedge')
+    assert.ok(whole.text.includes('and done'))
+  })
+
+  await checkAsync('an upload that failed is not described as one that is still coming', async () => {
+    const ctx = { get: () => null, agents: { get: () => ({ session: { id: 's-b' } }) } }
+    const refused = await attachmentContent(ctx, 's-b', [
+      { kind: 'file', name: 'server.log', bytes: 900, receiptId: '', status: 'error' },
+    ])
+    assert.ok(refused.note.includes('upload failed'), 'the model is told the upload failed')
+    assert.ok(refused.note.includes('Ask the user to attach it again'), 'and what the user can do about it')
+    assert.equal(refused.note.includes('still uploading'), false, 'a refusal is not a wait')
+    assert.equal(refused.note.includes('has not received'), false)
+    assert.equal(refused.unseen, 1)
+
+    const waiting = await attachmentContent(ctx, 's-b', [
+      { kind: 'image', name: 'shot.png', bytes: 900, receiptId: '', status: 'uploading' },
+    ])
+    assert.ok(waiting.note.includes('still uploading'), 'an upload in flight is described as such')
+    assert.equal(waiting.note.includes('upload failed'), false)
+
+    // The state is part of the cache identity: a refused upload and a retry are
+    // different situations even when name and size match.
+    const failed = [{ kind: 'file', name: 'a.log', bytes: 5, receiptId: '', status: 'error' }]
+    const pending = [{ kind: 'file', name: 'a.log', bytes: 5, receiptId: '', status: 'uploading' }]
+    assert.notEqual(attachmentStamp(failed), attachmentStamp(pending), 'the reason is part of the question')
+    assert.equal(attachmentStamp(failed), 'file:a.log:5:error')
   })
 
   /** The line appears after the promise resolves: wait for the one this check made. */
@@ -3867,6 +3948,10 @@ group('host: attachments')
       assert.equal(rows.length, 1, 'one terminal line for this stream')
       assert.equal(rows[0].attachments, 1)
       assert.equal(rows[0].attachmentKinds, 'image')
+      // Sent and seen are different facts: the line says which is which, so a
+      // receipt that stopped resolving reads as "one attachment, none of it seen".
+      assert.equal(rows[0].attachmentsSeen, 1, 'the picture really resolved')
+      assert.equal(rows[0].attachmentsUnseen, 0)
     }
   })
 }

@@ -1131,7 +1131,10 @@ const SMALL_FILE_MAX_BYTES = 8 * 1024
 const WHOLE_FILE_MAX_CHARS = 12000
 const PREVIEW_MAX_LINES = 3
 const PREVIEW_MAX_CHARS = 400
-const MAX_FILE_EXCERPT_BYTES = 96 * 1024
+// How much of a file is worth reading to answer either question: a small file is
+// read in full, a large one only far enough to see its first lines. Reading the
+// whole 96 KB window to quote three lines cost a request 0.9 ms per file.
+const PREVIEW_MAX_BYTES = 8 * 1024
 
 function normalizeAttachments(raw) {
   if (!Array.isArray(raw)) return []
@@ -1139,10 +1142,12 @@ function normalizeAttachments(raw) {
   for (const item of raw.slice(0, MAX_SENT_ATTACHMENTS)) {
     if (item === null || typeof item !== 'object') continue
     const kind = item.kind === 'image' ? 'image' : 'file'
+    // Why there is no receipt matters: still uploading, refused, or unknown.
+    const status = item.status === 'ready' || item.status === 'uploading' || item.status === 'error' ? item.status : 'missing'
     const receiptId = typeof item.receiptId === 'string' ? item.receiptId.slice(0, MAX_RECEIPT_CHARS) : ''
     const name = typeof item.name === 'string' ? item.name.slice(0, MAX_ATTACHMENT_NAME) : ''
     const bytes = typeof item.bytes === 'number' && Number.isFinite(item.bytes) && item.bytes > 0 ? Math.floor(item.bytes) : 0
-    out.push({ kind, name, bytes, receiptId })
+    out.push({ kind, name, bytes, receiptId, status })
   }
   return out
 }
@@ -1152,9 +1157,19 @@ function normalizeAttachments(raw) {
  * a different question, and a two-minute memory keyed only on text would answer it
  * with the previous picture's suggestion.
  */
-function attachmentStamp(attachments) {
+function normalizeAttachmentTotal(value, sent) {
+  const count = Number.isFinite(value) ? Math.floor(value) : 0
+  return count > sent ? count : sent
+}
+
+function attachmentStamp(attachments, total = 0) {
   if (!Array.isArray(attachments) || attachments.length === 0) return ''
-  return attachments.map((item) => `${item.kind}:${item.receiptId === '' ? item.name : item.receiptId}:${item.bytes}`).join(',')
+  // Attachments past the cap still change the question, so they change the key:
+  // dropping the tenth file must not answer with the ninth file's suggestion.
+  const rest = Number.isFinite(total) && total > attachments.length ? `+${total}` : ''
+  return attachments
+    .map((item) => `${item.kind}:${item.receiptId === '' ? item.name : item.receiptId}:${item.bytes}${item.status === 'error' || item.status === 'uploading' ? `:${item.status}` : ''}`)
+    .join(',') + rest
 }
 
 /** A service this Host may or may not mount; its absence must not fail a request. */
@@ -1181,21 +1196,28 @@ function formatBytes(bytes) {
 async function readFileInsight(store, ref) {
   const path = typeof store?.fileHostPath === 'function' ? store.fileHostPath(ref) : undefined
   if (typeof path !== 'string' || path === '') return null
+  const declared = Number.isFinite(ref?.bytes) && ref.bytes > 0 ? ref.bytes : null
+  // One byte past the declared size, so a file that grew since it was uploaded is
+  // reported as clipped instead of being quoted as if it were complete.
+  const window = declared !== null && declared <= SMALL_FILE_MAX_BYTES ? declared + 1 : PREVIEW_MAX_BYTES
   let handle = null
   try {
     handle = await openAsync(path, 'r')
-    const buffer = Buffer.alloc(MAX_FILE_EXCERPT_BYTES)
-    const { bytesRead } = await handle.read(buffer, 0, MAX_FILE_EXCERPT_BYTES, 0)
+    const buffer = Buffer.alloc(window)
+    const { bytesRead } = await handle.read(buffer, 0, window, 0)
     const slice = buffer.subarray(0, bytesRead)
     // A NUL byte in the head means the file is not text at all: its name and size are
     // the whole truth, and the note says so instead of quoting binary garbage.
     if (slice.includes(0)) return null
     const text = slice.toString('utf8')
-    const bytes = Number.isFinite(ref?.bytes) && ref.bytes > 0 ? ref.bytes : bytesRead
+    const bytes = declared ?? bytesRead
     if (bytes <= SMALL_FILE_MAX_BYTES) {
       const characters = Array.from(text)
       const whole = characters.length > WHOLE_FILE_MAX_CHARS
-      return { mode: 'full', text: characters.slice(0, WHOLE_FILE_MAX_CHARS).join(''), clipped: whole || bytesRead < bytes }
+      // A read that filled its window means there is more file than we were told
+      // about: the size was wrong (the file grew) or unknown to begin with.
+      const filled = declared === null ? bytesRead >= window : bytesRead > declared
+      return { mode: 'full', text: characters.slice(0, WHOLE_FILE_MAX_CHARS).join(''), clipped: whole || filled }
     }
     const lines = text.split('\n').slice(0, PREVIEW_MAX_LINES).join('\n')
     return { mode: 'preview', text: Array.from(lines).slice(0, PREVIEW_MAX_CHARS).join('') }
@@ -1211,8 +1233,8 @@ async function readFileInsight(store, ref) {
  * that says what the model can and cannot see. The prompt stays last so the
  * provider's prefix cache still covers everything above the draft.
  */
-async function attachmentContent(ctx, sessionId, attachments) {
-  if (!Array.isArray(attachments) || attachments.length === 0) return { blocks: [], note: '' }
+async function attachmentContent(ctx, sessionId, attachments, total = 0) {
+  if (!Array.isArray(attachments) || attachments.length === 0) return { blocks: [], note: '', seen: 0, unseen: 0 }
   let agent = null
   try {
     agent = ctx.agents.get(sessionId) ?? null
@@ -1256,13 +1278,31 @@ async function attachmentContent(ctx, sessionId, attachments) {
       continue
     }
     unresolved += 1
-    lines.push(`The user attached ${unresolved === 1 ? 'a' : 'another'} ${item.kind === 'image' ? 'image' : 'file'}${item.name === '' ? '' : ` ("${item.name}")`} that the Host has not received yet.`)
+    const what = `${unresolved === 1 ? 'a' : 'another'} ${item.kind === 'image' ? 'image' : 'file'}${item.name === '' ? '' : ` ("${item.name}")`}`
+    if (item.status === 'error') {
+      lines.push(`The user attached ${what}, but its upload failed: you cannot see it at all, and waiting will not help. Ask the user to attach it again.`)
+    } else if (item.status === 'uploading') {
+      lines.push(`The user attached ${what}, which is still uploading: you cannot see it yet.`)
+    } else {
+      lines.push(`The user attached ${what} that the Host has not received.`)
+    }
   }
   if (unresolved > 0) {
     lines.push('Do not describe or quote an attachment you cannot see; continue from the typed text alone.')
   }
-  if (lines.length === 0) return { blocks: [], note: '' }
-  return { blocks, note: `Attachments in this message:\n${lines.join('\n')}` }
+  // The cap is ours, not the user's: saying nothing turns nine files into eight
+  // without a word. The model gets told what it is not being shown.
+  if (Number.isFinite(total) && total > attachments.length) {
+    const rest = total - attachments.length
+    lines.push(`The composer holds ${rest} more ${rest === 1 ? 'attachment' : 'attachments'} that are not described here at all; ask the user if they matter.`)
+  }
+  if (lines.length === 0) return { blocks: [], note: '', seen: 0, unseen: 0 }
+  return {
+    blocks,
+    note: `Attachments in this message:\n${lines.join('\n')}`,
+    seen: attachments.length - unresolved,
+    unseen: unresolved,
+  }
 }
 
 function cacheKey(sessionId, mode, draft, events, route, language = '', epoch = 0, effort = '', attachments = '') {
@@ -1920,7 +1960,7 @@ function sseWriter(res) {
  * so the ghost starts growing in a few hundred milliseconds instead of after
  * the whole call. Frames: start, delta, retract, final, done, error.
  */
-async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0, route: override, receivedAt = Date.now(), attachments = [] }, res, signal) {
+async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0, route: override, receivedAt = Date.now(), attachments = [], attachmentTotal = 0 }, res, signal) {
   // Validate before any header is flushed: afterwards the status is fixed at 200
   // and the browser can no longer tell "not live" from "model failed".
   {
@@ -1936,9 +1976,21 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0,
   let effectiveRoute = null
   /** Resolved attachment descriptors, so the terminal line can count them. */
   let attached = []
+  /** How many the composer held, including the ones past the cap. */
+  let attachmentCount = 0
   // `path` says which branch answered: drafts under MIN_TAIL_DRAFT_CHARS take the
   // short prompt, which never streams, so a split of the wait is useless without it.
-  const progress = { painted: false, delivered: false, paintedChars: 0, path: 'main', finish: null, chars: 0, reasoning: 0 }
+  const progress = {
+    painted: false,
+    delivered: false,
+    paintedChars: 0,
+    path: 'main',
+    finish: null,
+    chars: 0,
+    reasoning: 0,
+    attachmentsSeen: null,
+    attachmentsUnseen: null,
+  }
   const send = (event, payload) => {
     // The short branch never streams: it answers with one `final` frame. Counting
     // only deltas labelled every one of those suggestions as "silent" — 28 out of
@@ -1986,7 +2038,8 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0,
     // picture must not be answered from the previous answer's cache.
     // Assigned, not redeclared: the terminal line in `finally` counts what was sent.
     attached = Array.isArray(attachments) ? attachments : []
-    const stamp = attachmentStamp(attached)
+    attachmentCount = normalizeAttachmentTotal(attachmentTotal, attached.length)
+    const stamp = attachmentStamp(attached, attachmentCount)
     const key = cacheKey(
       sessionId,
       'compose',
@@ -2064,7 +2117,7 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0,
     }
     const workTimer = setTimeout(() => entry.controller.abort(cancelled()), REQUEST_TIMEOUT_MS)
     workTimer.unref?.()
-    entry.work = produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, route: override, receivedAt, signal: entry.controller.signal, progress, attachments: attached })
+    entry.work = produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, route: override, receivedAt, signal: entry.controller.signal, progress, attachments: attached, attachmentTotal: attachmentCount })
       .finally(() => {
         entry.settled = true
         clearTimeout(workTimer)
@@ -2108,6 +2161,8 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0,
       finish: progress.finish,
       attachments: attached.length,
       attachmentKinds: attached.map((item) => item.kind).join('+') || null,
+      attachmentsSeen: progress.attachmentsSeen,
+      attachmentsUnseen: progress.attachmentsUnseen,
       ms: Date.now() - receivedAt,
     })
     // The model call outlives an abandoned request on purpose. Everything the
@@ -2224,7 +2279,7 @@ async function composeShortDraft(ctx, session, events, options) {
       return true
 }
 
-async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal, receivedAt, route: override, progress = null, attachments = [] }) {
+async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal, receivedAt, route: override, progress = null, attachments = [], attachmentTotal = 0 }) {
   try {
     // Two or three characters can only take a guess: the short-draft prompt gives one
     // or stays silent. Anything longer goes to the main compose, which can rewrite as
@@ -2233,7 +2288,11 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
     // differently.
     // What the user is holding, as the model will see it. Resolved before the call,
     // because a receipt that no longer stands is a fact the answer must reflect.
-    const attached = await attachmentContent(ctx, sessionId, attachments)
+    const attached = await attachmentContent(ctx, sessionId, attachments, attachmentTotal)
+    if (progress !== null) {
+      progress.attachmentsSeen = attached.seen
+      progress.attachmentsUnseen = attached.unseen
+    }
     const lead = attached.note === '' ? attached.blocks : [...attached.blocks, { type: 'text', text: attached.note }]
     const plan = composePlan(cleanDraft)
     if (plan.short) {
@@ -2378,7 +2437,7 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
  * finishes and tidies what the user is typing.
  * @returns a mode-appropriate result object.
  */
-async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0, route: override, attachments = [] }, signal) {
+async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0, route: override, attachments = [], attachmentTotal = 0 }, signal) {
   signal.throwIfAborted()
   const agent = ctx.agents.get(sessionId)
   if (agent === null || agent === undefined) throw httpError('Session is not live in this Host', 409)
@@ -2394,7 +2453,8 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0,
   // A next-message suggestion is about what the user is holding too: a composer
   // with a screenshot in it invites a different sentence than an empty one.
   const attached = Array.isArray(attachments) ? attachments : []
-  const stamp = attachmentStamp(attached)
+  const attachmentCount = normalizeAttachmentTotal(attachmentTotal, attached.length)
+  const stamp = attachmentStamp(attached, attachmentCount)
   // A brand-new thread has no history to continue, so there is nothing to suggest —
   // unless something is attached. "This screenshot" in an empty session is a
   // question with an obvious first sentence; returning nothing there is the bug.
@@ -2434,7 +2494,7 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0,
   // instead of paying for a second call. Next-message keeps its own map — it has no
   // streaming transport, so there is nothing to share with.
   if (kind === 'compose') {
-    return await composePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, route: override, attachments: attached }, signal)
+    return await composePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, route: override, attachments: attached, attachmentTotal: attachmentCount }, signal)
   }
 
   // The browser retries, the safety net and typing jitter can all land on the
@@ -2444,7 +2504,7 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0,
   const workController = new AbortController()
   const workTimer = setTimeout(() => workController.abort(cancelled()), REQUEST_TIMEOUT_MS)
   workTimer.unref?.()
-  const work = computePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, route: override, signal: workController.signal, attachments: attached })
+  const work = computePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, route: override, signal: workController.signal, attachments: attached, attachmentTotal: attachmentCount })
     .finally(() => clearTimeout(workTimer))
   inflight.set(key, work)
   try {
@@ -2538,8 +2598,8 @@ async function computeShortPrediction(ctx, session, events, options) {
     return empty
 }
 
-async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, signal, route: override, attachments = [] }) {
-  const attached = await attachmentContent(ctx, session?.id ?? session?.sessionId ?? null, attachments)
+async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, signal, route: override, attachments = [], attachmentTotal = 0 }) {
+  const attached = await attachmentContent(ctx, session?.id ?? session?.sessionId ?? null, attachments, attachmentTotal)
   const lead = attached.note === '' ? attached.blocks : [...attached.blocks, { type: 'text', text: attached.note }]
   if (kind === 'next') {
     // The next-message window is built here, not before the branch: a compose call
@@ -2816,6 +2876,9 @@ async function handlePredict(ctx, token, req, res) {
     // Only the identity of what is attached crosses the wire: names, sizes and the
     // upload receipts the Host already stored. Never the bytes.
     const attachments = normalizeAttachments(body?.attachments)
+    // How many the composer holds in total: past the cap they are not described,
+    // and a silent drop is the kind of lie this round is removing.
+    const attachmentTotal = normalizeAttachmentTotal(body?.attachmentTotal, attachments.length)
     trace('request', {
       sessionId,
       mode,
@@ -2823,6 +2886,7 @@ async function handlePredict(ctx, token, req, res) {
       pinnedModel: pickedRoute?.model ?? null,
       pinnedReasoning: reasoning ?? null,
       attachments: attachments.length,
+      attachmentTotal,
       attachmentKinds: attachments.map((item) => item.kind).join('+') || null,
     })
     const wantsStream = mode === 'compose'
@@ -2830,10 +2894,10 @@ async function handlePredict(ctx, token, req, res) {
       && req.headers.accept.includes('text/event-stream')
     if (wantsStream) {
       trace('stream', { sessionId, draftChars: draft.length })
-      await withAbort(composeStream(ctx, { sessionId, draft, locale, forced, epoch, route, receivedAt, attachments }, res, controller.signal), controller.signal)
+      await withAbort(composeStream(ctx, { sessionId, draft, locale, forced, epoch, route, receivedAt, attachments, attachmentTotal }, res, controller.signal), controller.signal)
       return
     }
-    const result = await withAbort(predict(ctx, { sessionId, draft, mode, locale, forced, epoch, route, attachments }, controller.signal), controller.signal)
+    const result = await withAbort(predict(ctx, { sessionId, draft, mode, locale, forced, epoch, route, attachments, attachmentTotal }, controller.signal), controller.signal)
     const count = Array.isArray(result.candidates) ? result.candidates.length
       : typeof result.text === 'string' ? 1 : 0
     trace('result', { sessionId, kind: result.kind, count, reason: result.reason ?? null, fallback: result.fallback ?? null })
@@ -3156,7 +3220,7 @@ function cacheEntries() {
   }))
 }
 
-export const __test = { handleModels, produceCompose, composeStream, predict, cacheEntries, ledgerCandidates, stateDirectory, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, PROBE_SESSION_PREFIX, isProbeSession, buildShortDraftPrompt, sentencePrompt, composePlan, resetEffortRefusals, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, trimEcho, normalizeAttachments, attachmentStamp, attachmentContent, formatBytes, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
+export const __test = { handleModels, produceCompose, composeStream, predict, cacheEntries, ledgerCandidates, stateDirectory, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, PROBE_SESSION_PREFIX, isProbeSession, buildShortDraftPrompt, sentencePrompt, composePlan, resetEffortRefusals, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, trimEcho, normalizeAttachments, attachmentStamp, attachmentContent, formatBytes, readFileInsight, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
 
 
 

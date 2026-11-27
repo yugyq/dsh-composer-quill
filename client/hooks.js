@@ -494,7 +494,7 @@
             }, live.timeoutMs || CLIENT_TIMEOUT_MS)
           }
           bump()
-          streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose', attachments: live.attachments ?? [] }, active.signal, {
+          streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose', attachments: live.attachments ?? [], attachmentTotal: live.attachmentTotal ?? 0 }, active.signal, {
             start: (data) => {
               bump()
               // Keep whatever is on screen: the first delta replaces it.
@@ -568,7 +568,7 @@
         }, live.timeoutMs || CLIENT_TIMEOUT_MS)
         active.signal.addEventListener('abort', () => clearTimeout(deadline), { once: true })
         Promise.resolve()
-          .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode, attachments: live.attachments ?? [] }, active.signal))
+          .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode, attachments: live.attachments ?? [], attachmentTotal: live.attachmentTotal ?? 0 }, active.signal))
           .then((body) => {
             if (active.signal.aborted) return
             markLive()

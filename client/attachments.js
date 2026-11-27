@@ -38,8 +38,12 @@
       // Why the last describe() came back the way it did. The dock reports it, so a
       // silent empty list can be told apart from an empty composer in the log.
       let lastNote = ''
+      // How many the composer actually holds. Past MAX_DESCRIBED_ATTACHMENTS the rest
+      // are not described, and the Host is told how many it is not being shown.
+      let lastTotal = 0
       const describe = (input) => {
         const ids = Array.isArray(input?.attachmentIds) ? input.attachmentIds : []
+        lastTotal = ids.length
         lastNote = ids.length === 0 ? 'none' : ''
         if (ids.length === 0) return []
         const conversation = conversationOf()
@@ -60,20 +64,33 @@
           const bytes = Number.isFinite(item?.file?.size) ? item.file.size : 0
           const upload = uploads[typeof item?.id === 'string' ? item.id : '']
           const receiptId = upload?.status === 'ready' && typeof upload.receiptId === 'string' ? upload.receiptId : ''
-          described.push({ kind: item?.kind === 'image' ? 'image' : 'file', name, bytes, receiptId })
+          // Why the receipt is missing changes what the model should say: an upload
+          // still running is a wait, one the Host refused is a dead end.
+          const status = upload?.status === 'ready' || upload?.status === 'uploading' || upload?.status === 'error'
+            ? upload.status
+            : 'missing'
+          described.push({ kind: item?.kind === 'image' ? 'image' : 'file', name, bytes, receiptId, status })
           if (described.length >= MAX_DESCRIBED_ATTACHMENTS) break
         }
         lastNote = lastNote === '' ? `ok:${described.length}:${described.filter(item => item.receiptId !== '').length}` : lastNote
         return described
       }
       const probe = () => lastNote
+      const total = () => lastTotal
       /**
        * The same shape the Host stamps into its request trace, so a log line from
        * either side reads identically. An unready attachment has no receipt: its
        * name stands in, which still changes when a different file is picked.
        */
-      const key = (described) => (Array.isArray(described) ? described : [])
-        .map((item) => `${item?.kind === 'image' ? 'image' : 'file'}:${item?.receiptId ? item.receiptId : (item?.name ?? '')}:${Number.isFinite(item?.bytes) ? item.bytes : 0}`)
-        .join(',')
-      return { describe, probe, key }
+      const key = (described, count = 0) => {
+        const list = Array.isArray(described) ? described : []
+        const stamp = list
+          .map((item) => `${item?.kind === 'image' ? 'image' : 'file'}:${item?.receiptId ? item.receiptId : (item?.name ?? '')}:${Number.isFinite(item?.bytes) ? item.bytes : 0}`)
+          .join(',')
+        // Same convention as the Host's stamp: dropping the tenth file must read as a
+        // different question than dropping none.
+        const total = Number.isFinite(count) ? Math.floor(count) : 0
+        return total > list.length ? `${stamp}+${total}` : stamp
+      }
+      return { describe, probe, total, key }
     }
