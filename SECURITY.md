@@ -11,6 +11,8 @@
 
 Only the prompt sent to your model provider, and only what that prompt contains: your draft, the last turns of the conversation, a short digest, a style summary, and the latest assistant reply.
 
+**Attachments.** When the composer holds an image or a file, the plugin sends a descriptor — kind, name, size, and the upload receipt the Host issued — to its own Host on this machine. The bytes never pass through the plugin's routes and are never written by it. The Host resolves the receipt and, if the suggestion model accepts images (`deepseek-flash` does), the picture is sent to that provider as part of the same prompt; a text-only model receives a placeholder instead. A file is read locally by the Host (first 1600 characters of text) and quoted in the prompt; if the receipt no longer resolves, the model is told the attachment is not visible and instructed not to describe it.
+
 Before the prompt is sent, nine shapes are replaced with `[redacted …]`: PEM private keys, AWS `AKIA…`, GitHub `ghp_` / `github_pat_`, OpenAI `sk-…`, Stripe `sk_live_`, Slack `xox…`, JWTs, `Bearer …` tokens, and long base64 secrets.
 
 Your draft is redacted on the same rules. A rewrite that comes back carrying a `[redacted]` marker is discarded rather than offered, so a draft holding a secret produces no suggestion instead of leaking one.

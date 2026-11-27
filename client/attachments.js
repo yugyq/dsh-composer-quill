@@ -1,0 +1,56 @@
+// --- attachments.js — concatenated into client.js by dev/tools/build-client.mjs ---
+    /** A composer rarely holds more than a screenshot and a file at once. */
+    const MAX_DESCRIBED_ATTACHMENTS = 8
+
+    /**
+     * What the composer is holding, in the only shape this plugin is allowed to send.
+     *
+     * The browser uploads every attachment before the message is sent, so by the time
+     * a suggestion is asked for the Host already holds the bytes and has handed back a
+     * receipt per file. We forward that receipt and nothing else: the request body
+     * stays a few hundred bytes, and the plugin never becomes a second way to move a
+     * file. An attachment that is still uploading is described without a receipt —
+     * the Host then tells the model the picture is not visible yet, which is true.
+     */
+    function attachmentPort(ctx) {
+      const conversationOf = () => {
+        try {
+          return ctx?.conversation ?? ctx?.get?.('conversation') ?? null
+        } catch {
+          return null
+        }
+      }
+      const uploadsOf = (conversation) => {
+        try {
+          const store = conversation?.fileUploads
+          return typeof store?.getSnapshot === 'function' ? (store.getSnapshot() ?? {}) : {}
+        } catch {
+          return {}
+        }
+      }
+      const describe = (input) => {
+        const ids = Array.isArray(input?.attachmentIds) ? input.attachmentIds : []
+        if (ids.length === 0) return []
+        const conversation = conversationOf()
+        let drafted = []
+        try {
+          drafted = typeof conversation?.resolveDraftAttachments === 'function'
+            ? (conversation.resolveDraftAttachments(ids) ?? [])
+            : []
+        } catch {
+          drafted = []
+        }
+        const uploads = uploadsOf(conversation)
+        const described = []
+        for (const item of drafted) {
+          const name = typeof item?.file?.name === 'string' ? item.file.name : ''
+          const bytes = Number.isFinite(item?.file?.size) ? item.file.size : 0
+          const upload = uploads[typeof item?.id === 'string' ? item.id : '']
+          const receiptId = upload?.status === 'ready' && typeof upload.receiptId === 'string' ? upload.receiptId : ''
+          described.push({ kind: item?.kind === 'image' ? 'image' : 'file', name, bytes, receiptId })
+          if (described.length >= MAX_DESCRIBED_ATTACHMENTS) break
+        }
+        return described
+      }
+      return { describe }
+    }

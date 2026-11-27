@@ -30,6 +30,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 /** The fragments, in the order they are concatenated. */
 export const CLIENT_SOURCES = Object.freeze([
   'client/prelude.js',
+  'client/attachments.js',
   'client/store.js',
   'client/config.js',
   'client/geometry.js',

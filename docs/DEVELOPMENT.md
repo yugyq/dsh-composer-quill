@@ -1,6 +1,6 @@
 # 开发与验证
 
-> 适用版本：0.32.1 ｜ 宿主是手写 ESM，没有构建；浏览器端源码在 `client/`，由 `npm run build:client` 拼成 `client.js`
+> 适用版本：0.33.0 ｜ 宿主是手写 ESM，没有构建；浏览器端源码在 `client/`，由 `npm run build:client` 拼成 `client.js`
 
 
 ## 1. 目录结构
@@ -221,9 +221,9 @@ DSH_SCENARIO_LIMIT=14 python dev/verify/verify_daily.py
 
 | 事件 | 含义 |
 | --- | --- |
-| `request` | 客户端要什么（`pinnedModel`/`pinnedReasoning`，跟随会话时为空） |
+| `request` | 客户端要什么（`pinnedModel`/`pinnedReasoning`，跟随会话时为空；`attachments` 与 `attachmentKinds` 是输入框里带的附件数与种类，只有描述没有字节） |
 | `route-effective` | 实际跑的模型与强度，在解析处记录 |
-| `stream` / `stream-end` | 一条流式响应的开始 / 唯一终态行（`status`: `painted` `silent` `cached` `unchanged` `cancelled` `error`，含 `path` `model` `effort` `paintedChars` `chars` `reasoning` `finish` `delivered` 与总 `ms`）。短草稿走 `path: "short"`，它不发 delta，只发一帧 `final`——`delivered` 就是给这条路径用的 |
+| `stream` / `stream-end` | 一条流式响应的开始 / 唯一终态行（`status`: `painted` `silent` `cached` `unchanged` `cancelled` `error`，含 `path` `model` `effort` `paintedChars` `chars` `reasoning` `finish` `delivered` `attachments` `attachmentKinds` 与总 `ms`）。短草稿走 `path: "short"`，它不发 delta，只发一帧 `final`——`delivered` 就是给这条路径用的 |
 | `first-delta` | 首字到达，拆成 `queueMs`（请求进来到调模型）与 `modelMs`（调模型到首字）；`late: true` 表示这条请求早已收尾，首字属于仍在跑的模型调用，不能计入等待 |
 | `result` | 非流式（下一句）结果 |
 | `cancelled` | 请求被取消（客户端断开或新请求顶替） |

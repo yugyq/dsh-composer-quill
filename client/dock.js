@@ -1,6 +1,6 @@
 // --- dock.js — concatenated into client.js by dev/tools/build-client.mjs ---
     function GhostDock(props) {
-      const { session, input, inputActions, t } = props
+      const { session, input, inputActions, t, attachments } = props
       const ghost = props.ghost ?? idleGhost()
       const config = props.config ?? defaultConfig()
       const settings = React.useSyncExternalStore(config.subscribe, config.getSnapshot)
@@ -50,7 +50,10 @@
       const retriedFor = React.useRef(null)
       const { booking: dockBooking, send: sendDock } = useDockBooking()
       const latest = React.useRef({})
-      latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
+      // Described once per render, from the composer's own attachment list: the
+      // request path must not read a store that may have moved on since.
+      const attached = typeof attachments?.describe === 'function' ? attachments.describe(input) : []
+      latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, attachments: attached, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
       const layer = React.useRef(null)
       if (layer.current === null) layer.current = createGhostLayer()
       const ghostLayer = layer.current

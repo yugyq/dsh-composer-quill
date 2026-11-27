@@ -1,6 +1,6 @@
 # 接口与流式协议
 
-> 适用版本：0.32.1 ｜ 五条路由、两种响应形态（JSON / SSE）
+> 适用版本：0.33.0 ｜ 五条路由、两种响应形态（JSON / SSE）
 
 ## 1. 鉴权
 
@@ -24,7 +24,12 @@
 ### 2.1 请求
 
 ```json
-{ "sessionId": "session-…", "mode": "next" | "compose", "draft": "帮我看看" }
+{
+  "sessionId": "session-…",
+  "mode": "next" | "compose",
+  "draft": "帮我看看",
+  "attachments": [{ "kind": "image", "name": "shot.png", "bytes": 2048, "receiptId": "…" }]
+}
 ```
 
 | 字段 | 说明 |
@@ -32,8 +37,9 @@
 | `sessionId` | 必填，DSH 会话 id |
 | `mode` | `compose` 且 `draft` 非空 → 补写；否则按 `next` 处理（兼容旧客户端传入 `normalize`/`continuation`） |
 | `draft` | 草稿，服务端截断到 6000 字符；`compose` 且为空返回 400 |
+| `attachments` | 可选，最多 8 条。只有描述，没有字节：`kind`（`image`/`file`）、`name`（≤120 字符）、`bytes`、`receiptId`（浏览器上传后宿主给出的回执，≤200 字符）。宿主用回执换成 `ImageBlock` 或文件摘录；回执无效时模型会被告知「看不到」。`attachments` 参与缓存键：同一句话配不同图片是两个不同的问题 |
 
-请求体上限 48 KB；超时 30 s。
+请求体上限 48 KB；超时 30 s。附件本身不经过这条路由——它由浏览器上传、宿主保管。
 
 ### 2.2 JSON 响应（`mode=next`，或未声明 `accept: text/event-stream`）
 

@@ -1104,7 +1104,141 @@ function transcriptStamp(events) {
   return `${tail.length}:${hash.toString(36)}`
 }
 
-function cacheKey(sessionId, mode, draft, events, route, language = '', epoch = 0, effort = '') {
+/**
+ * What the composer was holding when the suggestion was asked for. The browser
+ * has already sent the bytes to the Host during upload, so a receipt is the only
+ * thing that crosses our route: the body ceiling stays at 48 KB and the plugin
+ * never becomes a second upload path.
+ */
+const MAX_SENT_ATTACHMENTS = 8
+const MAX_ATTACHMENT_NAME = 120
+const MAX_RECEIPT_CHARS = 200
+/** Enough of a file to answer "what does it say" without copying it into a prompt. */
+const MAX_FILE_EXCERPT_CHARS = 1600
+const MAX_FILE_EXCERPT_BYTES = 96 * 1024
+
+function normalizeAttachments(raw) {
+  if (!Array.isArray(raw)) return []
+  const out = []
+  for (const item of raw.slice(0, MAX_SENT_ATTACHMENTS)) {
+    if (item === null || typeof item !== 'object') continue
+    const kind = item.kind === 'image' ? 'image' : 'file'
+    const receiptId = typeof item.receiptId === 'string' ? item.receiptId.slice(0, MAX_RECEIPT_CHARS) : ''
+    const name = typeof item.name === 'string' ? item.name.slice(0, MAX_ATTACHMENT_NAME) : ''
+    const bytes = typeof item.bytes === 'number' && Number.isFinite(item.bytes) && item.bytes > 0 ? Math.floor(item.bytes) : 0
+    out.push({ kind, name, bytes, receiptId })
+  }
+  return out
+}
+
+/**
+ * Cache identity of the attachment set. The same draft with a different picture is
+ * a different question, and a two-minute memory keyed only on text would answer it
+ * with the previous picture's suggestion.
+ */
+function attachmentStamp(attachments) {
+  if (!Array.isArray(attachments) || attachments.length === 0) return ''
+  return attachments.map((item) => `${item.kind}:${item.receiptId === '' ? item.name : item.receiptId}:${item.bytes}`).join(',')
+}
+
+/** A service this Host may or may not mount; its absence must not fail a request. */
+function optionalService(ctx, serviceName) {
+  try {
+    return ctx?.get?.(serviceName) ?? null
+  } catch {
+    return null
+  }
+}
+
+function formatBytes(bytes) {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return 'unknown size'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/**
+ * The first slice of a stored file, so the model can read what the user attached
+ * instead of being told that something exists. Files that are not text are left at
+ * their name and size: a prompt full of bytes helps nobody.
+ */
+async function readFileExcerpt(store, ref) {
+  const path = typeof store?.fileHostPath === 'function' ? store.fileHostPath(ref) : undefined
+  if (typeof path !== 'string' || path === '') return null
+  let handle = null
+  try {
+    handle = await openAsync(path, 'r')
+    const buffer = Buffer.alloc(MAX_FILE_EXCERPT_BYTES)
+    const { bytesRead } = await handle.read(buffer, 0, MAX_FILE_EXCERPT_BYTES, 0)
+    const slice = buffer.subarray(0, bytesRead)
+    if (slice.includes(0)) return null
+    const text = slice.toString('utf8')
+    const characters = Array.from(text)
+    const clipped = characters.slice(0, MAX_FILE_EXCERPT_CHARS).join('')
+    return { text: clipped, truncated: bytesRead < (ref?.bytes ?? 0) || characters.length > MAX_FILE_EXCERPT_CHARS }
+  } catch {
+    return null
+  } finally {
+    if (handle !== null) await handle.close().catch(() => {})
+  }
+}
+
+/**
+ * Messages content for one request: the pictures themselves, then one text block
+ * that says what the model can and cannot see. The prompt stays last so the
+ * provider's prefix cache still covers everything above the draft.
+ */
+async function attachmentContent(ctx, sessionId, attachments) {
+  if (!Array.isArray(attachments) || attachments.length === 0) return { blocks: [], note: '' }
+  let agent = null
+  try {
+    agent = ctx.agents.get(sessionId) ?? null
+  } catch {
+    agent = null
+  }
+  const uploads = optionalService(ctx, 'fileUploads')
+  const store = optionalService(ctx, 'attachments')
+  const blocks = []
+  const lines = []
+  let unresolved = 0
+  for (const item of attachments) {
+    let staged
+    if (agent !== null && uploads !== null && item.receiptId !== '') {
+      try {
+        staged = uploads.resolve(agent, item.receiptId)
+      } catch {
+        staged = undefined
+      }
+    }
+    if (staged !== undefined && staged !== null) {
+      if (staged.type === 'image') {
+        blocks.push({ type: 'image', attachment: staged.attachment })
+        const label = item.name === '' ? '' : `（${item.name}）`
+        lines.push(`The user attached an image${label}. You can see it: when the draft says "这个截图" / "这张图" / "this screenshot", it means this image.`)
+        continue
+      }
+      const ref = staged.attachment
+      const excerpt = await readFileExcerpt(store, ref)
+      const label = `The user attached a file "${ref?.name ?? item.name}" (${formatBytes(ref?.bytes ?? item.bytes)}).`
+      if (excerpt === null) {
+        lines.push(`${label} Only its name and size are available; do not describe its contents.`)
+      } else {
+        const more = excerpt.truncated ? '\n(the excerpt stops here; the file is longer)' : ''
+        lines.push(`${label} Beginning of its text:\n"""\n${excerpt.text}\n"""${more}`)
+      }
+      continue
+    }
+    unresolved += 1
+    lines.push(`The user attached ${unresolved === 1 ? 'a' : 'another'} ${item.kind === 'image' ? 'image' : 'file'}${item.name === '' ? '' : ` ("${item.name}")`} that the Host has not received yet.`)
+  }
+  if (unresolved > 0) {
+    lines.push('Do not describe or quote an attachment you cannot see; continue from the typed text alone.')
+  }
+  if (lines.length === 0) return { blocks: [], note: '' }
+  return { blocks, note: `Attachments in this message:\n${lines.join('\n')}` }
+}
+
+function cacheKey(sessionId, mode, draft, events, route, language = '', epoch = 0, effort = '', attachments = '') {
   const last = Array.isArray(events) && events.length > 0 ? events[events.length - 1] : null
   // Switching the model produces no Session event: without the route in the key
   // an answer from the previous model would be replayed for up to two minutes.
@@ -1115,7 +1249,7 @@ function cacheKey(sessionId, mode, draft, events, route, language = '', epoch = 
   // or jitter (a Session switching in loads its events a moment later), which made
   // identical situations miss each other. The turn counter is the authoritative
   // answer to "has anything happened", so it carries that job alone.
-  return `${sessionId}|${mode}|${maskSecrets(draft)}|${transcriptStamp(events)}|${model}|${language}|${epoch}|${effort}`
+  return `${sessionId}|${mode}|${maskSecrets(draft)}|${transcriptStamp(events)}|${model}|${language}|${epoch}|${effort}|${attachments}`
 }
 
 function cached(key) {
@@ -1578,7 +1712,7 @@ function resetEffortRefusals() {
   effortRefusals.clear()
 }
 
-async function ask(ctx, session, events, system, prompt, signal, onDelta, mode = 'compose', override = null) {
+async function ask(ctx, session, events, system, prompt, signal, onDelta, mode = 'compose', override = null, lead = []) {
   // Settings → 续笔 → 模型 can name its own route. It wins over the Session's, which
   // is the point: a cheap model for cheap suggestions.
   const overrideRoute = routeOf(override)
@@ -1619,7 +1753,9 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
       model: route.model,
       system,
       maxTokens,
-      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+      // The prompt goes last: everything a provider can cache sits above it, and the
+      // draft — the only part that changes as the user types — stays at the tail.
+      messages: [{ role: 'user', content: [...lead, { type: 'text', text: prompt }] }],
       sessionId: session?.id ?? session?.sessionId,
       signal,
       ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
@@ -1757,7 +1893,7 @@ function sseWriter(res) {
  * so the ghost starts growing in a few hundred milliseconds instead of after
  * the whole call. Frames: start, delta, retract, final, done, error.
  */
-async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0, route: override, receivedAt = Date.now() }, res, signal) {
+async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0, route: override, receivedAt = Date.now(), attachments = [] }, res, signal) {
   // Validate before any header is flushed: afterwards the status is fixed at 200
   // and the browser can no longer tell "not live" from "model failed".
   {
@@ -1771,6 +1907,8 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0,
   // latency figure was computed on the survivors.
   let status = 'error'
   let effectiveRoute = null
+  /** Resolved attachment descriptors, so the terminal line can count them. */
+  let attached = []
   // `path` says which branch answered: drafts under MIN_TAIL_DRAFT_CHARS take the
   // short prompt, which never streams, so a split of the wait is useless without it.
   const progress = { painted: false, delivered: false, paintedChars: 0, path: 'main', finish: null, chars: 0, reasoning: 0 }
@@ -1817,6 +1955,11 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0,
     // The route that will actually be used, not the Session's: a model pick or a
     // thinking setting in Settings changes the answer and must change the key.
     effectiveRoute = routeOf(override) ?? routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx)
+    // The attachments are part of the question: the same words over a different
+    // picture must not be answered from the previous answer's cache.
+    // Assigned, not redeclared: the terminal line in `finally` counts what was sent.
+    attached = Array.isArray(attachments) ? attachments : []
+    const stamp = attachmentStamp(attached)
     const key = cacheKey(
       sessionId,
       'compose',
@@ -1826,6 +1969,7 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0,
       resolveLanguage({ locale, forced }),
       epoch,
       override?.reasoningEffort ?? '',
+      stamp,
     )
     const hit = cached(key)
     if (hit !== undefined) {
@@ -1893,7 +2037,7 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0,
     }
     const workTimer = setTimeout(() => entry.controller.abort(cancelled()), REQUEST_TIMEOUT_MS)
     workTimer.unref?.()
-    entry.work = produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, route: override, receivedAt, signal: entry.controller.signal, progress })
+    entry.work = produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, route: override, receivedAt, signal: entry.controller.signal, progress, attachments: attached })
       .finally(() => {
         entry.settled = true
         clearTimeout(workTimer)
@@ -1935,6 +2079,8 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch = 0,
       chars: progress.chars,
       reasoning: progress.reasoning,
       finish: progress.finish,
+      attachments: attached.length,
+      attachmentKinds: attached.map((item) => item.kind).join('+') || null,
       ms: Date.now() - receivedAt,
     })
     // The model call outlives an abandoned request on purpose. Everything the
@@ -1988,7 +2134,7 @@ function leaveInFlight(key, entry) {
  * and how short a tail may be, so the JSON route makes the same call.
  */
 async function composeShortDraft(ctx, session, events, options) {
-  const { cleanDraft, plan, locale, forced, key, send, signal, route: override, progress = null, receivedAt } = options
+  const { cleanDraft, plan, locale, forced, key, send, signal, route: override, progress = null, receivedAt, lead = [] } = options
       const shortContext = transcriptOf(events, { ...plan.context, focus: cleanDraft }) || '[]'
       const shortPrompt = buildShortDraftPrompt({
         draft: cleanDraft,
@@ -2022,7 +2168,7 @@ async function composeShortDraft(ctx, session, events, options) {
       // 'off' answered in 435-925 ms with no thinking at all. The panel still
       // controls the rewrite path; this branch stays fast on purpose.
       const shortOverride = { ...(override ?? {}), reasoningEffort: REASONING_EFFORT_OFF }
-      const short = await ask(ctx, session, events, COMPOSE_RULES, shortPrompt, signal, shortDelta, 'compose', shortOverride)
+      const short = await ask(ctx, session, events, COMPOSE_RULES, shortPrompt, signal, shortDelta, 'compose', shortOverride, lead)
       if (progress !== null) {
         progress.finish = short.finish?.kind ?? null
         progress.chars = Array.from(short.text ?? '').length
@@ -2051,17 +2197,21 @@ async function composeShortDraft(ctx, session, events, options) {
       return true
 }
 
-async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal, receivedAt, route: override, progress = null }) {
+async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal, receivedAt, route: override, progress = null, attachments = [] }) {
   try {
     // Two or three characters can only take a guess: the short-draft prompt gives one
     // or stays silent. Anything longer goes to the main compose, which can rewrite as
     // well as append — routing it to the short prompt made suggestions disappear.
     // The plan decides every part of the question, so the JSON route cannot ask it
     // differently.
+    // What the user is holding, as the model will see it. Resolved before the call,
+    // because a receipt that no longer stands is a fact the answer must reflect.
+    const attached = await attachmentContent(ctx, sessionId, attachments)
+    const lead = attached.note === '' ? attached.blocks : [...attached.blocks, { type: 'text', text: attached.note }]
     const plan = composePlan(cleanDraft)
     if (plan.short) {
       if (progress !== null) progress.path = 'short'
-      await composeShortDraft(ctx, session, events, { cleanDraft, plan, locale, forced, key, send, signal, route: override, progress, receivedAt })
+      await composeShortDraft(ctx, session, events, { cleanDraft, plan, locale, forced, key, send, signal, route: override, progress, receivedAt, lead })
       return
     }
     const context = transcriptOf(events, { ...plan.context, focus: cleanDraft }) || '[]'
@@ -2126,7 +2276,7 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
       // model sometimes emits "\n" before "REWRITE:".
       const lead = head.replace(/^\s+/, '')
       if (/^rewrite\s*:/i.test(lead) || lead.length >= 12) decide(head)
-    }, plan.mode, override)
+    }, plan.mode, override, lead)
     if (progress !== null) {
       progress.path = 'main'
       progress.finish = first.finish?.kind ?? null
@@ -2201,7 +2351,7 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
  * finishes and tidies what the user is typing.
  * @returns a mode-appropriate result object.
  */
-async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0, route: override }, signal) {
+async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0, route: override, attachments = [] }, signal) {
   signal.throwIfAborted()
   const agent = ctx.agents.get(sessionId)
   if (agent === null || agent === undefined) throw httpError('Session is not live in this Host', 409)
@@ -2215,6 +2365,10 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0,
   if (kind === 'next' && !hasTurns) return { kind: 'next', candidates: [], reason: 'empty-thread' }
 
   const effectiveRoute = routeOf(override) ?? routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx)
+  // Same question means the same draft over the same attachments; anything else is
+  // a different answer. This transport pays for the same model call as the stream.
+  const attached = kind === 'compose' && Array.isArray(attachments) ? attachments : []
+  const stamp = attachmentStamp(attached)
   const key = cacheKey(
     sessionId,
     kind,
@@ -2224,6 +2378,7 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0,
     resolveLanguage({ locale, forced }),
     epoch,
     override?.reasoningEffort ?? '',
+    stamp,
   )
   const hit = cached(key)
   if (hit !== undefined) {
@@ -2245,7 +2400,7 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0,
   // instead of paying for a second call. Next-message keeps its own map — it has no
   // streaming transport, so there is nothing to share with.
   if (kind === 'compose') {
-    return await composePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, route: override }, signal)
+    return await composePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, route: override, attachments: attached }, signal)
   }
 
   // The browser retries, the safety net and typing jitter can all land on the
@@ -2255,7 +2410,7 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0,
   const workController = new AbortController()
   const workTimer = setTimeout(() => workController.abort(cancelled()), REQUEST_TIMEOUT_MS)
   workTimer.unref?.()
-  const work = computePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, route: override, signal: workController.signal })
+  const work = computePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, route: override, signal: workController.signal, attachments: attached })
     .finally(() => clearTimeout(workTimer))
   inflight.set(key, work)
   try {
@@ -2320,7 +2475,7 @@ async function composePrediction(ctx, options, signal) {
  * same short context, same tail rules, and the same forced "no thinking" setting.
  */
 async function computeShortPrediction(ctx, session, events, options) {
-  const { kind, cleanDraft, plan, locale, forced, key, signal, route: override } = options
+  const { kind, cleanDraft, plan, locale, forced, key, signal, route: override, lead = [] } = options
     const context = transcriptOf(events, { ...plan.context, focus: cleanDraft }) || '[]'
     const shortPrompt = buildShortDraftPrompt({
       draft: cleanDraft,
@@ -2332,7 +2487,7 @@ async function computeShortPrediction(ctx, session, events, options) {
     })
     // A draft this short has nothing to reason about; the SSE branch forces this too.
     const shortOverride = { ...(override ?? {}), reasoningEffort: REASONING_EFFORT_OFF }
-    const short = await ask(ctx, session, events, COMPOSE_RULES, shortPrompt, signal, undefined, 'compose', shortOverride)
+    const short = await ask(ctx, session, events, COMPOSE_RULES, shortPrompt, signal, undefined, 'compose', shortOverride, lead)
     const parsedShort = parseComposeReply(short.text, cleanDraft, {
       language: resolveLanguage({ locale, forced }),
       allowTail: plan.allowTail,
@@ -2349,7 +2504,11 @@ async function computeShortPrediction(ctx, session, events, options) {
     return empty
 }
 
-async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, signal, route: override }) {
+async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, signal, route: override, attachments = [] }) {
+  // Only a compose call can be about what the user is holding; a next-message
+  // suggestion is about what they said before.
+  const attached = kind === 'compose' ? await attachmentContent(ctx, session?.id ?? session?.sessionId ?? null, attachments) : { blocks: [], note: '' }
+  const lead = attached.note === '' ? attached.blocks : [...attached.blocks, { type: 'text', text: attached.note }]
   if (kind === 'next') {
     // The next-message window is built here, not before the branch: a compose call
     // used to walk the whole transcript for a context it never read.
@@ -2435,7 +2594,7 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
   // Two or three characters: finish it or stay silent.
   const plan = composePlan(cleanDraft)
   if (plan.short) {
-    return computeShortPrediction(ctx, session, events, { kind, cleanDraft, plan, locale, forced, key, signal, route: override })
+    return computeShortPrediction(ctx, session, events, { kind, cleanDraft, plan, locale, forced, key, signal, route: override, lead })
   }
 
   const composeContext = transcriptOf(events, { ...plan.context, focus: cleanDraft }) || '[]'
@@ -2449,7 +2608,7 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
     assistant: lastAssistantText(events),
     settingLanguage: resolveLanguage({ locale, forced }),
   })
-  const { text: reply, route } = await ask(ctx, session, events, COMPOSE_RULES, prompt, signal, undefined, plan.mode, override)
+  const { text: reply, route } = await ask(ctx, session, events, COMPOSE_RULES, prompt, signal, undefined, plan.mode, override, lead)
   const parsed = parseComposeReply(reply, cleanDraft, {
     language: resolveLanguage({ locale, forced }),
     allowTail: plan.allowTail,
@@ -2621,16 +2780,27 @@ async function handlePredict(ctx, token, req, res) {
       : 'next'
     // What the client asked for, which is empty whenever the setting is "跟随会话".
     // The route that ran is on `route-effective`, written where it is actually resolved.
-    trace('request', { sessionId, mode, draftChars: draft.length, pinnedModel: pickedRoute?.model ?? null, pinnedReasoning: reasoning ?? null })
+    // Only the identity of what is attached crosses the wire: names, sizes and the
+    // upload receipts the Host already stored. Never the bytes.
+    const attachments = normalizeAttachments(body?.attachments)
+    trace('request', {
+      sessionId,
+      mode,
+      draftChars: draft.length,
+      pinnedModel: pickedRoute?.model ?? null,
+      pinnedReasoning: reasoning ?? null,
+      attachments: attachments.length,
+      attachmentKinds: attachments.map((item) => item.kind).join('+') || null,
+    })
     const wantsStream = mode === 'compose'
       && typeof req.headers.accept === 'string'
       && req.headers.accept.includes('text/event-stream')
     if (wantsStream) {
       trace('stream', { sessionId, draftChars: draft.length })
-      await withAbort(composeStream(ctx, { sessionId, draft, locale, forced, epoch, route, receivedAt }, res, controller.signal), controller.signal)
+      await withAbort(composeStream(ctx, { sessionId, draft, locale, forced, epoch, route, receivedAt, attachments }, res, controller.signal), controller.signal)
       return
     }
-    const result = await withAbort(predict(ctx, { sessionId, draft, mode, locale, forced, epoch, route }, controller.signal), controller.signal)
+    const result = await withAbort(predict(ctx, { sessionId, draft, mode, locale, forced, epoch, route, attachments }, controller.signal), controller.signal)
     const count = Array.isArray(result.candidates) ? result.candidates.length
       : typeof result.text === 'string' ? 1 : 0
     trace('result', { sessionId, kind: result.kind, count, reason: result.reason ?? null, fallback: result.fallback ?? null })
@@ -2953,7 +3123,7 @@ function cacheEntries() {
   }))
 }
 
-export const __test = { handleModels, produceCompose, composeStream, predict, cacheEntries, ledgerCandidates, stateDirectory, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, PROBE_SESSION_PREFIX, isProbeSession, buildShortDraftPrompt, sentencePrompt, composePlan, resetEffortRefusals, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, trimEcho, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
+export const __test = { handleModels, produceCompose, composeStream, predict, cacheEntries, ledgerCandidates, stateDirectory, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, PROBE_SESSION_PREFIX, isProbeSession, buildShortDraftPrompt, sentencePrompt, composePlan, resetEffortRefusals, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, trimEcho, normalizeAttachments, attachmentStamp, attachmentContent, formatBytes, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
 
 
 

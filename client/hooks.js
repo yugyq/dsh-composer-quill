@@ -491,7 +491,7 @@
             }, live.timeoutMs || CLIENT_TIMEOUT_MS)
           }
           bump()
-          streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose' }, active.signal, {
+          streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose', attachments: live.attachments ?? [] }, active.signal, {
             start: (data) => {
               bump()
               // Keep whatever is on screen: the first delta replaces it.

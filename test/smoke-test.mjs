@@ -935,7 +935,7 @@ const reply = (url, body) => {
 
 globalThis.fetch = async (url, init) => {
   const body = JSON.parse(init.body)
-  calls.push({ url, mode: body.mode ?? 'beacon', draft: body.draft ?? '', sessionId: body.sessionId ?? null })
+  calls.push({ url, mode: body.mode ?? 'beacon', draft: body.draft ?? '', sessionId: body.sessionId ?? null, attachments: body.attachments })
   return { ok: true, status: 200, json: async () => reply(url, body) }
 }
 
@@ -1042,6 +1042,27 @@ check('bestHistoryMatch prefers the newest prefix match', () => {  const { bestH
   const short = bestHistoryMatch(items, '帮')
   assert.ok(short, 'a single character must be enough')
   assert.equal(bestHistoryMatch(items, ''), null, 'an empty draft has nothing to match')
+})
+
+check('the composer says what it is holding, and only that', () => {
+  const { attachmentPort } = moduleExports.__test
+  assert.deepEqual(attachmentPort({ get: () => undefined }).describe({ draft: '只有文字' }), [])
+  assert.deepEqual(attachmentPort(null).describe({ attachmentIds: ['i1'] }), [], 'no conversation service means nothing to describe')
+  const conversation = {
+    resolveDraftAttachments: (ids) => ids.map((id) => (id === 'i1'
+      ? { kind: 'image', id: 'i1', file: { name: 'shot.png', size: 2048 } }
+      : { kind: 'file', id, file: { name: 'notes.txt', size: 40 } })),
+    // Uploading happens before the message is sent, so a receipt may not exist yet.
+    fileUploads: { getSnapshot: () => ({ i1: { status: 'ready', receiptId: 'r1' }, i2: { status: 'uploading' } }) },
+  }
+  const port = attachmentPort({ get: (name) => (name === 'conversation' ? conversation : undefined) })
+  const described = port.describe({ attachmentIds: ['i1', 'i2'] })
+  assert.equal(described.length, 2)
+  assert.deepEqual(described[0], { kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1' })
+  assert.equal(described[1].kind, 'file')
+  assert.equal(described[1].receiptId, '', 'a file still uploading has no receipt yet')
+  const many = port.describe({ attachmentIds: Array.from({ length: 12 }, (_, i) => `i${i}`) })
+  assert.equal(many.length, 8, 'one message carries at most eight')
 })
 
 const ctx = {
@@ -1153,6 +1174,30 @@ await checkAsync('typing requests one compose call carrying the draft', async ()
   const compose = calls.filter((call) => call.mode === 'compose' && call.sessionId === 's-type')
   assert.equal(compose.length, 1, `calls: ${JSON.stringify(calls)}`)
   assert.equal(compose[0].draft, '帮我把这段日志')
+})
+
+await checkAsync('a compose request carries the attachments, never their bytes', async () => {
+  calls.length = 0
+  effectQueue = []
+  const port = moduleExports.__test.attachmentPort({
+    get: (name) => (name === 'conversation'
+      ? {
+          resolveDraftAttachments: () => [{ kind: 'image', id: 'i1', file: { name: 'shot.png', size: 2048 } }],
+          fileUploads: { getSnapshot: () => ({ i1: { status: 'ready', receiptId: 'r1' } }) },
+        }
+      : undefined),
+  })
+  renderDock(props({
+    session: { sessionId: 's-attach-req', running: false },
+    input: { draft: '这个截图里报的错是', attachmentIds: ['i1'] },
+    attachments: port,
+  }))
+  for (const run of effectQueue) run()
+  await wait(900)
+  const compose = calls.filter((call) => call.mode === 'compose' && call.sessionId === 's-attach-req')
+  assert.equal(compose.length, 1, `calls: ${JSON.stringify(calls)}`)
+  assert.deepEqual(compose[0].attachments, [{ kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r1' }])
+  assert.equal(JSON.stringify(compose[0]).includes('base64'), false, 'the picture itself never goes through this route')
 })
 
 await checkAsync('the dock renders one chip for the compose proposal', async () => {
@@ -3450,6 +3495,157 @@ group('host: stream telemetry')
     })
   })
 }
+
+group('host: attachments')
+
+{
+  const { normalizeAttachments, attachmentStamp, attachmentContent, cacheKey, composeStream, formatBytes } = host.__test
+
+  check('an attachment list is read defensively and capped', () => {
+    assert.deepEqual(normalizeAttachments(null), [])
+    assert.deepEqual(normalizeAttachments({}), [])
+    const many = Array.from({ length: 12 }, (_, i) => ({ kind: i % 2 === 0 ? 'file' : 'image', name: `n${i}`, bytes: 10 + i, receiptId: `r${i}` }))
+    const kept = normalizeAttachments(many)
+    assert.equal(kept.length, 8, 'eight is the most one message may carry')
+    assert.deepEqual(kept[0], { kind: 'file', name: 'n0', bytes: 10, receiptId: 'r0' })
+    const messy = normalizeAttachments([
+      'not an object',
+      { kind: 'image', name: 7, bytes: -3, receiptId: 42 },
+      { kind: 'video', name: 'x'.repeat(400), bytes: 1.9, receiptId: 'y'.repeat(400) },
+    ])
+    assert.equal(messy.length, 2, 'anything that is not an object is dropped')
+    assert.deepEqual(messy[0], { kind: 'image', name: '', bytes: 0, receiptId: '' })
+    assert.equal(messy[1].kind, 'file', 'an unknown kind is treated as a file')
+    assert.equal(messy[1].name.length, 120)
+    assert.equal(messy[1].receiptId.length, 200)
+    assert.equal(messy[1].bytes, 1, 'a fractional size is floored')
+  })
+
+  check('the attachment set is part of the cache identity', () => {
+    const base = { kind: 'image', name: 'shot.png', bytes: 9, receiptId: 'r1' }
+    assert.equal(attachmentStamp([]), '')
+    assert.equal(attachmentStamp(null), '')
+    const one = attachmentStamp([base])
+    const other = attachmentStamp([{ ...base, receiptId: 'r2' }])
+    const unnamed = attachmentStamp([{ ...base, receiptId: '' }])
+    assert.notEqual(one, other, 'a different picture is a different question')
+    assert.notEqual(one, unnamed)
+    const args = ['s-a', 'compose', '草稿', [], { provider: 'p', model: 'm' }, 'zh', 0, 'off']
+    assert.notEqual(cacheKey(...args, one), cacheKey(...args, other))
+    assert.notEqual(cacheKey(...args, one), cacheKey(...args, ''))
+    assert.equal(cacheKey(...args, ''), cacheKey(...args), 'no attachments reads as before')
+  })
+
+  check('a size is said the way a person says it', () => {
+    assert.equal(formatBytes(0), 'unknown size')
+    assert.equal(formatBytes(512), '512 B')
+    assert.equal(formatBytes(2048), '2.0 KB')
+    assert.equal(formatBytes(5 * 1024 * 1024), '5.0 MB')
+  })
+
+  await checkAsync('an image and a file become what the model can actually read', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'quill-attach-'))
+    const file = join(dir, 'notes.txt')
+    writeFileSync(file, '第一行：409 是会话过期\n第二行：重试之前先刷新\n')
+    const imageRef = { attachmentId: 'a1', mediaType: 'image/png', bytes: 2048, width: 10, height: 10 }
+    const fileRef = { attachmentId: 'a2', name: 'notes.txt', bytes: 40 }
+    const services = {
+      fileUploads: {
+        resolve: (agent, receiptId) => (receiptId === 'r-img'
+          ? { type: 'image', attachment: imageRef, encodedBytes: 2048 }
+          : receiptId === 'r-file' ? { type: 'file', attachment: fileRef } : undefined),
+      },
+      attachments: { fileHostPath: (ref) => (ref.attachmentId === 'a2' ? file : undefined) },
+    }
+    const ctx = { get: (name) => services[name], agents: { get: () => ({ session: { id: 's-a' } }) } }
+    const read = await attachmentContent(ctx, 's-a', [
+      { kind: 'image', name: 'shot.png', bytes: 2048, receiptId: 'r-img' },
+      { kind: 'file', name: 'notes.txt', bytes: 40, receiptId: 'r-file' },
+    ])
+    assert.equal(read.blocks.length, 1, 'only an image is sent as itself')
+    assert.equal(read.blocks[0].type, 'image')
+    assert.equal(read.blocks[0].attachment.attachmentId, 'a1')
+    assert.ok(read.note.includes('You can see it'), 'the model is told the picture is visible')
+    assert.ok(read.note.includes('notes.txt'), 'the file is named')
+    assert.ok(read.note.includes('409 是会话过期'), 'the beginning of its text is quoted')
+    assert.equal(read.note.includes('do not describe'), false, 'a file it can read is not hedged')
+  })
+
+  await checkAsync('an attachment the Host does not hold is said to be invisible', async () => {
+    const ctx = {
+      get: () => null,
+      agents: { get: () => ({ session: { id: 's-a' } }) },
+    }
+    const read = await attachmentContent(ctx, 's-a', [{ kind: 'image', name: 'shot.png', bytes: 10, receiptId: 'gone' }])
+    assert.deepEqual(read.blocks, [], 'nothing is invented for a receipt that does not resolve')
+    assert.ok(read.note.includes('shot.png'))
+    assert.ok(read.note.includes('has not received yet'), 'the model is told why it is missing')
+    assert.ok(read.note.includes('Do not describe or quote an attachment you cannot see'), 'and what not to do about it')
+    const empty = await attachmentContent(ctx, 's-a', [])
+    assert.deepEqual(empty, { blocks: [], note: '' })
+  })
+
+  /** The line appears after the promise resolves: wait for the one this check made. */
+  const waitForLine = async (dir, event, match) => {
+    const file = join(dir, 'composer-quill.log')
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const rows = (existsSync(file) ? readFileSync(file, 'utf8').split('\n') : [])
+        .filter(Boolean)
+        .map((line) => { try { return JSON.parse(line) } catch { return null } })
+        .filter((row) => row?.event === event && match(row))
+      if (rows.length > 0) return rows
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    return []
+  }
+
+  await checkAsync('the stream sends the picture and still ends on one line', async () => {
+    // The trace file follows the directory the module resolved at import; env moved
+    // after that has no effect, so read where the suite's own lines already land.
+    const dir = host.__test.stateDirectory()
+    {
+      const imageRef = { attachmentId: 'a9', mediaType: 'image/png', bytes: 12, width: 4, height: 4 }
+      const services = { fileUploads: { resolve: () => ({ type: 'image', attachment: imageRef, encodedBytes: 12 }) } }
+      const seen = []
+      const session = { id: 's-attach', requestHeader: () => ({ config: { provider: 'p', model: 'att-model' } }), snapshotEvents: () => [] }
+      const ctx = {
+        get: (name) => services[name],
+        agents: { get: () => ({ session }) },
+        llm: {
+          async *stream(options) {
+            seen.push(options)
+            yield { type: 'text-delta', text: '，看截图里那个 409。' }
+            yield { type: 'finish', reason: { kind: 'stop' } }
+          },
+        },
+      }
+      const res = new EventEmitter()
+      const chunks = []
+      res.statusCode = 0
+      res.writableEnded = false
+      res.destroyed = false
+      res.setHeader = () => {}
+      res.flushHeaders = () => {}
+      res.write = (chunk) => { chunks.push(String(chunk)); return true }
+      res.end = () => { res.writableEnded = true }
+      await composeStream(ctx, {
+        sessionId: 's-attach',
+        draft: '这个截图里报的错是',
+        receivedAt: Date.now() - 7,
+        attachments: [{ kind: 'image', name: 'shot.png', bytes: 12, receiptId: 'r-img' }],
+      }, res, new AbortController().signal)
+      assert.equal(seen.length, 1, `model calls: ${seen.length}`)
+      const content = seen[0].messages[0].content
+      assert.equal(content[0].type, 'image', 'the picture is in front of the words')
+      assert.equal(content[content.length - 1].type, 'text', 'the draft stays last, where the cache ends')
+      const rows = await waitForLine(dir, 'stream-end', (row) => row.sessionId === 's-attach')
+      assert.equal(rows.length, 1, 'one terminal line for this stream')
+      assert.equal(rows[0].attachments, 1)
+      assert.equal(rows[0].attachmentKinds, 'image')
+    }
+  })
+}
+
 
 const summary = [
   '',

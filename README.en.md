@@ -16,6 +16,7 @@ dsh plugin --profile desktop add dsh-composer-quill
 - **A sentence that will not come together**: type the first half and it continues; if the whole thing is tangled it returns one tidied version
 - **Interrupted mid-thought**: switch away and back, the suggestion is still there
 - **The paragraph you retype every day**: pulled from your own history, no model call
+- **Asking with a screenshot or a file**: the picture goes to the model itself, a file is quoted from its opening lines, so "what does this screenshot say" stops being an excuse to invent
 
 Requests go through the model route you already configured: there is no third-party server, and nothing is reported. "On your machine" only means no extra hop, though — the last two turns and your draft are sent to the model service you configured (usually a cloud one), and masking is best-effort over nine shapes.
 
@@ -96,6 +97,7 @@ Settings live in the browser's `localStorage`; nothing is sent anywhere.
 - **But content does leave your machine**: the last two turns, a style summary and your draft go to the model service you configured — usually a cloud one. This plugin does not control how that service stores or uses them.
 - **Masking is best-effort**: before context leaves, nine credential shapes become `[redacted …]` — private key blocks, AWS `AKIA…`, GitHub `ghp_` / `github_pat_`, OpenAI `sk-…`, Stripe, Slack `xox…`, JWTs, `Bearer …`. Secrets outside those shapes are not recognized.
 - **The draft is masked too**: a secret-shaped string in the draft becomes `[redacted …]` as well, and a rewrite carrying that marker is discarded — this run gives no suggestion rather than sending the secret out.
+- **Attachments travel as descriptions**: an image or file in the composer is sent to this machine's Host as kind, name, size, and the upload receipt — the bytes never pass through this plugin and are never written by it. The Host decodes the image for a model that accepts images, and quotes the first 1600 characters of a text file.
 - **Three local files**: diagnostics `composer-quill.log`, the usage ledger `composer-quill-usage.json` (counts and amounts only), and the suggestion cache `composer-quill-cache.json` (suggestion text, in plain text; delete it to clear). All three live in one state directory: `$DSH_PROFILE_DIR` when a profile is set, else `$DSH_HOME`, else `~/.dsh`. Tests and diagnostics can pin it with `DSH_COMPOSER_QUILL_STATE_DIR`.
 - **Routes are authenticated**: the Host side requires this launch cycle's token or a same-origin browser request; the history route accepts the token only.
 
@@ -112,7 +114,7 @@ Details in [Architecture](docs/ARCHITECTURE.md) and [Protocol](docs/PROTOCOL.md)
 
 ## Tests
 
-160 unit checks and 66 browser scenarios, both in CI. The scenarios cover the real rhythms: fast typing, pausing for a suggestion, cancelling, switching Sessions, long-text layout.
+168 unit checks and 66 browser scenarios, both in CI. The scenarios cover the real rhythms: fast typing, pausing for a suggestion, cancelling, switching Sessions, long-text layout.
 ```bash
 npm test                          # 156 offline unit checks (including client.js freshness)
 npm run test:ui                   # 64 browser scenarios (bundled simulator)
