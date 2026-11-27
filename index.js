@@ -182,6 +182,11 @@ const COMPOSE_RULES = [
   'Never describe the draft, the task or your reasoning. Output only the text the user would type next.',
   'The suggestion must belong to this conversation: reuse the concrete subject named in the transcript or the digest (a file, a bug, a decision) instead of generic filler.',
   'The transcript is chronological and the last two turns dominate: the suggestion must continue the topic being discussed right now. Earlier rows are background only — never revive a topic the conversation has moved past.',
+  // Attachments arrive as image blocks plus an English note beside the prompt. Without
+  // these two lines the model still used the picture in 5 of 6 drafts, and lost the
+  // concrete value whenever the draft referred to it vaguely ("那串订单号我记不清了").
+  'The message may carry attachments. What the attachment note says you can see, you can see: use it as fact about this message, never claim it is unavailable.',
+  'When the draft points at an attachment (a screenshot, a picture, a file just mentioned), continue with the concrete values visible in it, copied exactly as they appear — never rounded, re-spelled or guessed.',
 ].join('\n')
 
 /** Append one JSONL diagnostic line next to the profile. Best-effort only. */
