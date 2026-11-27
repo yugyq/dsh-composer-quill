@@ -3790,6 +3790,40 @@ group('host: attachments')
     assert.equal(seen.length, before + 1, 'a swapped picture must not be answered from the cache')
   })
 
+  await checkAsync('an empty session that holds a picture still gets a first sentence', async () => {
+    // A brand-new thread has no turns to continue, so next-mode answered with an
+    // empty list and the composer stayed blank — even with a screenshot attached.
+    // The attachment is context of its own: "这张图里是什么" is the sentence.
+    const { predict } = host.__test
+    const imageRef = { attachmentId: 'a21', mediaType: 'image/png', bytes: 12, width: 4, height: 4 }
+    const services = { fileUploads: { resolve: () => ({ type: 'image', attachment: imageRef, encodedBytes: 12 }) } }
+    const seen = []
+    const session = { id: 's-empty-att', requestHeader: () => ({ config: { provider: 'p', model: 'empty-model' } }), snapshotEvents: () => [] }
+    const ctx = {
+      get: (name) => services[name],
+      agents: { get: () => ({ session }) },
+      llm: {
+        async *stream(options) {
+          seen.push(options)
+          yield { type: 'text-delta', text: '{"candidates":["这张图里是什么？帮我看看","帮我看下截图"]}' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      },
+    }
+    const base = { sessionId: 's-empty-att', draft: '', mode: 'next', locale: 'zh-CN', forced: '', epoch: 0 }
+    const withPicture = await predict(ctx, { ...base, attachments: [{ kind: 'image', name: 'shot.png', bytes: 12, receiptId: 'r-empty' }] }, new AbortController().signal)
+    assert.equal(seen.length, 1, 'an attachment is enough to ask the model')
+    assert.equal(seen[0].messages[0].content[0].type, 'image', 'the picture travels with that question')
+    assert.ok(withPicture.candidates.length >= 1, 'and something comes back to type')
+    assert.equal(typeof withPicture.candidates[0], 'string', 'a candidate is the sentence itself')
+
+    // Nothing in the composer and nothing in the thread: still no guess.
+    const bare = await predict(ctx, { ...base, epoch: 1, attachments: [] }, new AbortController().signal)
+    assert.deepEqual(bare.candidates, [], 'an empty thread with nothing attached stays silent')
+    assert.equal(bare.reason, 'empty-thread', 'and says why')
+    assert.equal(seen.length, 1, 'without an attachment the model is not even called')
+  })
+
   await checkAsync('the stream sends the picture and still ends on one line', async () => {
     // The trace file follows the directory the module resolved at import; env moved
     // after that has no effect, so read where the suite's own lines already land.

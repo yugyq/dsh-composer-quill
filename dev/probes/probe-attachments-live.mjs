@@ -36,7 +36,7 @@ try {
 }
 
 const { __test } = await import('../../index.js')
-const { composeStream } = __test
+const { composeStream, predict } = __test
 
 const credentials = join(homedir(), '.dsh', '.credentials.yaml')
 const key = fs.existsSync(credentials)
@@ -166,11 +166,11 @@ function fakeContext(sessionId) {
   }
 }
 
-async function compose(label, draft, attachments, sessionId) {
+async function compose(label, draft, attachments, sessionId, epoch = 0) {
   const response = fakeResponse()
   const started = Date.now()
   await composeStream(fakeContext(sessionId), {
-    sessionId, draft, locale: 'zh-CN', forced: '', epoch: 0, receivedAt: Date.now(), attachments,
+    sessionId, draft, locale: 'zh-CN', forced: '', epoch, receivedAt: Date.now(), attachments,
   }, response, new AbortController().signal)
   const frames = response.frames().split('\n\n')
     .map((chunk) => chunk.split('\n').filter((line) => line.startsWith('data:')))
@@ -194,7 +194,9 @@ const descriptors = [
 async function confirms(label, draft, attachments, sessionId, wanted, tries = 2) {
   let text = ''
   for (let attempt = 1; attempt <= tries; attempt += 1) {
-    text = await compose(attempt === 1 ? label : `${label}（重试）`, draft, attachments, sessionId)
+    // The retry needs a different epoch, or it reads the first answer back out of
+    // the plugin's own cache and proves nothing.
+    text = await compose(attempt === 1 ? label : `${label}（重试）`, draft, attachments, sessionId, attempt - 1)
     if (text.includes(wanted)) return text
   }
   return text
@@ -206,8 +208,26 @@ const withFile = await confirms('仓编号是（带文件）', '我贴的文件�
 const withoutFile = await compose('同一草稿（无附件）', '我贴的文件里仓编号是', [], 's-live-d')
 const binaryArm = await compose('二进制文件', '这个文件里写了什么', [{ kind: 'file', name: 'report.bin', bytes: binary.byteLength, receiptId: 'r-bin' }], 's-live-e')
 
+// A brand-new session has no turns, so next-mode used to answer with an empty list
+// and the composer stayed blank. An attachment is context of its own — this is the
+// arm that says so, and the empty one right after it pins the old behaviour.
+async function nextArm(label, attachments) {
+  const started = Date.now()
+  const result = await predict(fakeContext('s-live-next'), {
+    sessionId: 's-live-next', draft: '', mode: 'next', locale: 'zh-CN', forced: '', epoch: 0, attachments,
+  }, new AbortController().signal)
+  const first = typeof result.candidates?.[0] === 'string' ? result.candidates[0] : ''
+  console.log(`${label.padEnd(22)} ${JSON.stringify(first).slice(0, 68).padEnd(70)} ${String(Date.now() - started).padStart(4)}ms  内容=${lastShape}`)
+  return result
+}
+
+const nextWithImage = await nextArm('空会话 + 图（下一句）', [descriptors[0]])
+const nextBare = await nextArm('空会话无附件（下一句）', [])
+
 const verdict = (label, ok) => console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}`)
 verdict('图片里的数字只有带着图片才说得对', withImage.includes('7342') && !withoutImage.includes('7342'))
 verdict('文件里的仓编号只有带着文件才说得对', withFile.includes('KX-7731') && !withoutFile.includes('KX-7731'))
 verdict('读不出正文的文件不会被编内容', !/KX-7731|BLUE-HERON/.test(binaryArm))
+verdict('空会话里带着图也能给出一句开头', (nextWithImage.candidates?.length ?? 0) >= 1)
+verdict('空会话里没有附件就仍然不猜', (nextBare.candidates?.length ?? 0) === 0 && nextBare.reason === 'empty-thread')
 process.exit(0)

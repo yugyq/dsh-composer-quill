@@ -2387,17 +2387,22 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0,
   const hasTurns = Array.isArray(events) && events.some((event) => event?.type === 'user/message' || event?.type === 'assistant/message')
   const cleanDraft = typeof draft === 'string' ? draft.slice(0, MAX_DRAFT_CHARS) : ''
 
-  // 'compose' is the only draft mode; the older names map onto it.
+  // 'compose' is the only draft mode; the older names map onto them.
   const kind = cleanDraft.trim() !== '' && mode !== 'next' ? 'compose' : 'next'
-  if (kind === 'next' && !hasTurns) return { kind: 'next', candidates: [], reason: 'empty-thread' }
-
-  const effectiveRoute = routeOf(override) ?? routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx)
   // Same question means the same draft over the same attachments; anything else is
   // a different answer. This transport pays for the same model call as the stream.
   // A next-message suggestion is about what the user is holding too: a composer
   // with a screenshot in it invites a different sentence than an empty one.
   const attached = Array.isArray(attachments) ? attachments : []
   const stamp = attachmentStamp(attached)
+  // A brand-new thread has no history to continue, so there is nothing to suggest —
+  // unless something is attached. "This screenshot" in an empty session is a
+  // question with an obvious first sentence; returning nothing there is the bug.
+  if (kind === 'next' && !hasTurns && attached.length === 0) {
+    return { kind: 'next', candidates: [], reason: 'empty-thread' }
+  }
+
+  const effectiveRoute = routeOf(override) ?? routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx)
   const key = cacheKey(
     sessionId,
     kind,
