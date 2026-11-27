@@ -2,7 +2,10 @@
     const GhostDockEntry = (props) => h(GhostBoundary, null, h(GhostDock, props))
     const GhostSettingsEntry = (props) => h(GhostBoundary, null, h(GhostSettingsRow, props))
 
-    const inject = ['slots', 'locale']
+    // `conversation` is declared even though the composer works without it: the
+    // attachment port reads the draft's attachments through that service, and the
+    // runtime only exposes a service the plugin has declared.
+    const inject = ['slots', 'locale', 'conversation']
 
     async function apply(ctx) {
       // The beacon names the shape this bundle registers, so a reload can be told apart

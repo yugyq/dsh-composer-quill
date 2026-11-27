@@ -363,8 +363,15 @@ const COVERED_DEBOUNCE_MS = 1200
      */
     function attachmentPort(ctx) {
       const conversationOf = () => {
+        // The runtime gates direct service access on the plugin's declared inject and
+        // throws for the rest, so a plain `ctx.conversation` can be a denial rather
+        // than a value. The declared path is tried first, the lookup is the fallback.
         try {
-          return ctx?.conversation ?? ctx?.get?.('conversation') ?? null
+          const declared = ctx?.conversation
+          if (declared !== undefined && declared !== null) return declared
+        } catch {}
+        try {
+          return ctx?.get?.('conversation') ?? null
         } catch {
           return null
         }
@@ -377,10 +384,15 @@ const COVERED_DEBOUNCE_MS = 1200
           return {}
         }
       }
+      // Why the last describe() came back the way it did. The dock reports it, so a
+      // silent empty list can be told apart from an empty composer in the log.
+      let lastNote = ''
       const describe = (input) => {
         const ids = Array.isArray(input?.attachmentIds) ? input.attachmentIds : []
+        lastNote = ids.length === 0 ? 'none' : ''
         if (ids.length === 0) return []
         const conversation = conversationOf()
+        if (conversation === null) lastNote = 'no-conversation'
         let drafted = []
         try {
           drafted = typeof conversation?.resolveDraftAttachments === 'function'
@@ -389,6 +401,7 @@ const COVERED_DEBOUNCE_MS = 1200
         } catch {
           drafted = []
         }
+        if (drafted.length === 0) lastNote = conversation?.resolveDraftAttachments === undefined ? 'no-resolver' : 'unresolved'
         const uploads = uploadsOf(conversation)
         const described = []
         for (const item of drafted) {
@@ -399,9 +412,11 @@ const COVERED_DEBOUNCE_MS = 1200
           described.push({ kind: item?.kind === 'image' ? 'image' : 'file', name, bytes, receiptId })
           if (described.length >= MAX_DESCRIBED_ATTACHMENTS) break
         }
+        lastNote = lastNote === '' ? `ok:${described.length}:${described.filter(item => item.receiptId !== '').length}` : lastNote
         return described
       }
-      return { describe }
+      const probe = () => lastNote
+      return { describe, probe }
     }
 // --- store.js — concatenated into client.js by dev/tools/build-client.mjs ---
 
@@ -1947,6 +1962,9 @@ const COVERED_DEBOUNCE_MS = 1200
             pendingCompose: input.pendingCompose,
             pendingNext: input.pendingNext,
             statusLength: input.statusText.length,
+          attachments: input.attachmentCount,
+          attachmentIds: input.attachmentIds,
+          attachmentNote: input.attachmentNote,
             suppressRewrites: input.suppress?.on === true,
             ignoredStreak: input.suppress?.streak ?? 0,
             historyActive: input.historyActive,
@@ -3141,6 +3159,10 @@ const COVERED_DEBOUNCE_MS = 1200
         t, decisionKey, sessionId, session, running, draft, state, history, enabled, suppress,
         nextActive, composeActive, historyActive, pendingCompose, pendingNext, statusText, draftEmpty,
         shown: nextActive ? current : proposal, learnedShown, report,
+        // An empty attachment list is only meaningful next to why it is empty.
+        attachmentCount: attached.length,
+        attachmentIds: Array.isArray(input?.attachmentIds) ? input.attachmentIds.length : -1,
+        attachmentNote: typeof attachments?.probe === 'function' ? attachments.probe() : 'no-port',
       })
 
       if (!enabled) return null
@@ -3536,7 +3558,10 @@ const COVERED_DEBOUNCE_MS = 1200
     const GhostDockEntry = (props) => h(GhostBoundary, null, h(GhostDock, props))
     const GhostSettingsEntry = (props) => h(GhostBoundary, null, h(GhostSettingsRow, props))
 
-    const inject = ['slots', 'locale']
+    // `conversation` is declared even though the composer works without it: the
+    // attachment port reads the draft's attachments through that service, and the
+    // runtime only exposes a service the plugin has declared.
+    const inject = ['slots', 'locale', 'conversation']
 
     async function apply(ctx) {
       // The beacon names the shape this bundle registers, so a reload can be told apart

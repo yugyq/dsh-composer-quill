@@ -420,6 +420,10 @@
         t, decisionKey, sessionId, session, running, draft, state, history, enabled, suppress,
         nextActive, composeActive, historyActive, pendingCompose, pendingNext, statusText, draftEmpty,
         shown: nextActive ? current : proposal, learnedShown, report,
+        // An empty attachment list is only meaningful next to why it is empty.
+        attachmentCount: attached.length,
+        attachmentIds: Array.isArray(input?.attachmentIds) ? input.attachmentIds.length : -1,
+        attachmentNote: typeof attachments?.probe === 'function' ? attachments.probe() : 'no-port',
       })
 
       if (!enabled) return null

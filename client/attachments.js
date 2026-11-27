@@ -14,8 +14,15 @@
      */
     function attachmentPort(ctx) {
       const conversationOf = () => {
+        // The runtime gates direct service access on the plugin's declared inject and
+        // throws for the rest, so a plain `ctx.conversation` can be a denial rather
+        // than a value. The declared path is tried first, the lookup is the fallback.
         try {
-          return ctx?.conversation ?? ctx?.get?.('conversation') ?? null
+          const declared = ctx?.conversation
+          if (declared !== undefined && declared !== null) return declared
+        } catch {}
+        try {
+          return ctx?.get?.('conversation') ?? null
         } catch {
           return null
         }
@@ -28,10 +35,15 @@
           return {}
         }
       }
+      // Why the last describe() came back the way it did. The dock reports it, so a
+      // silent empty list can be told apart from an empty composer in the log.
+      let lastNote = ''
       const describe = (input) => {
         const ids = Array.isArray(input?.attachmentIds) ? input.attachmentIds : []
+        lastNote = ids.length === 0 ? 'none' : ''
         if (ids.length === 0) return []
         const conversation = conversationOf()
+        if (conversation === null) lastNote = 'no-conversation'
         let drafted = []
         try {
           drafted = typeof conversation?.resolveDraftAttachments === 'function'
@@ -40,6 +52,7 @@
         } catch {
           drafted = []
         }
+        if (drafted.length === 0) lastNote = conversation?.resolveDraftAttachments === undefined ? 'no-resolver' : 'unresolved'
         const uploads = uploadsOf(conversation)
         const described = []
         for (const item of drafted) {
@@ -50,7 +63,9 @@
           described.push({ kind: item?.kind === 'image' ? 'image' : 'file', name, bytes, receiptId })
           if (described.length >= MAX_DESCRIBED_ATTACHMENTS) break
         }
+        lastNote = lastNote === '' ? `ok:${described.length}:${described.filter(item => item.receiptId !== '').length}` : lastNote
         return described
       }
-      return { describe }
+      const probe = () => lastNote
+      return { describe, probe }
     }

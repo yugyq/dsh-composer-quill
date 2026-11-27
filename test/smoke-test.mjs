@@ -1005,7 +1005,9 @@ const moduleExports = globalThis.__ghostFactory.factory((name) => {
 })
 
 check('client exports slots + locale inject', () => {
-  assert.deepEqual(moduleExports.inject, ['slots', 'locale'])
+  // `conversation` is what lets the attachment port ask the composer what it holds;
+  // the runtime hands a plugin only the services it declared.
+  assert.deepEqual(moduleExports.inject, ['slots', 'locale', 'conversation'])
   assert.equal(typeof moduleExports.apply, 'function')
 })
 
@@ -1063,6 +1065,22 @@ check('the composer says what it is holding, and only that', () => {
   assert.equal(described[1].receiptId, '', 'a file still uploading has no receipt yet')
   const many = port.describe({ attachmentIds: Array.from({ length: 12 }, (_, i) => `i${i}`) })
   assert.equal(many.length, 8, 'one message carries at most eight')
+
+  // The runtime gates direct service access on the plugin's declared inject: an
+  // undeclared `ctx.conversation` throws instead of reading undefined. That throw
+  // is what made every attachment vanish from a real request while this test passed.
+  const guarded = {
+    get: (name) => (name === 'conversation' ? conversation : undefined),
+    get conversation() { throw new Error('service "conversation" is not declared by your plugin') },
+  }
+  assert.equal(port.describe({ attachmentIds: ['i1'] })[0].receiptId, 'r1')
+  const declined = attachmentPort(guarded)
+  assert.deepEqual(
+    declined.describe({ attachmentIds: ['i1'] }).map((item) => item.receiptId),
+    ['r1'],
+    'a denied direct read falls back to the declared lookup',
+  )
+  assert.equal(declined.probe(), 'ok:1:1')
 })
 
 const ctx = {
