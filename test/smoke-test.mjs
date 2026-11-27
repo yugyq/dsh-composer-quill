@@ -1386,6 +1386,13 @@ check('a frame left over from another session cannot join the new one', () => {
   assert.equal(ghost.getSnapshot().phase, 'loading', 'and a late failure does not become this session error')
   ghost.streamDone({ reason: 'unchanged' }, 's-old')
   assert.equal(ghost.getSnapshot().phase, 'loading')
+
+  // Four frames were dropped above, and each one was counted: a race that is
+  // now handled must still leave a trace, or nobody can tell it happened.
+  assert.equal(ghost.streamDropped(), 4)
+  ghost.streamStart('s-new', 'compose', '把这段日志')
+  ghost.streamDelta('，按服务分组', 's-new')
+  assert.equal(ghost.streamDropped(), 4, 'a frame that belongs here is not a drop')
 })
 
 check('a run of ignored suggestions withholds rewrites, not tails', () => {

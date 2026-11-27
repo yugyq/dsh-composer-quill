@@ -425,6 +425,7 @@
       const decisionKey = `${state.phase}|${state.kind}|${state.items.length}|${nextActive}|${composeActive}|${historyActive}|${draftEmpty}|${running}|${suppress.on ? 'suppressed' : 'live'}:${suppress.streak}`
       useDockStateReport({
         t, decisionKey, sessionId, session, running, draft, state, history, enabled, suppress,
+        droppedFrames: typeof ghost.streamDropped === 'function' ? ghost.streamDropped() : 0,
         nextActive, composeActive, historyActive, pendingCompose, pendingNext, statusText, draftEmpty,
         shown: nextActive ? current : proposal, learnedShown, report,
         // An empty attachment list is only meaningful next to why it is empty.

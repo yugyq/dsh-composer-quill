@@ -725,7 +725,15 @@ const COVERED_DEBOUNCE_MS = 1200
       const late = () => streamSession !== null && store.getSnapshot().sessionId !== streamSession
   // Every frame carries the session it was requested for. A stream outlives a
   // session switch; without this the frames of the old one land in the new one.
-  const belongs = (fromSession) => fromSession === undefined || store.getSnapshot().sessionId === fromSession
+  // A frame that no longer belongs here is dropped; counting it turns a silent
+  // race into something the log can show.
+  let droppedFrames = 0
+  const belongs = (fromSession) => {
+    if (fromSession === undefined) return true
+    if (store.getSnapshot().sessionId === fromSession) return true
+    droppedFrames += 1
+    return false
+  }
       const cancel = () => {
         if (controller !== null) {
           controller.abort()
@@ -768,6 +776,8 @@ const COVERED_DEBOUNCE_MS = 1200
           lastSuppressed = false
           return was
         },
+        /** How many frames were dropped because their session had moved on. */
+        streamDropped: () => droppedFrames,
         cancel: () => {
           cancel()
           if (!streaming) return
@@ -2053,6 +2063,9 @@ const COVERED_DEBOUNCE_MS = 1200
           attachments: input.attachmentCount,
           attachmentIds: input.attachmentIds,
           attachmentNote: input.attachmentNote,
+            // A frame whose session had moved on is dropped; if this is ever
+            // non-zero the race is real and worth chasing in the log.
+            droppedFrames: input.droppedFrames ?? 0,
             suppressRewrites: input.suppress?.on === true,
             ignoredStreak: input.suppress?.streak ?? 0,
             historyActive: input.historyActive,
@@ -3282,6 +3295,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const decisionKey = `${state.phase}|${state.kind}|${state.items.length}|${nextActive}|${composeActive}|${historyActive}|${draftEmpty}|${running}|${suppress.on ? 'suppressed' : 'live'}:${suppress.streak}`
       useDockStateReport({
         t, decisionKey, sessionId, session, running, draft, state, history, enabled, suppress,
+        droppedFrames: typeof ghost.streamDropped === 'function' ? ghost.streamDropped() : 0,
         nextActive, composeActive, historyActive, pendingCompose, pendingNext, statusText, draftEmpty,
         shown: nextActive ? current : proposal, learnedShown, report,
         // An empty attachment list is only meaningful next to why it is empty.

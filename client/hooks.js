@@ -145,6 +145,9 @@
           attachments: input.attachmentCount,
           attachmentIds: input.attachmentIds,
           attachmentNote: input.attachmentNote,
+            // A frame whose session had moved on is dropped; if this is ever
+            // non-zero the race is real and worth chasing in the log.
+            droppedFrames: input.droppedFrames ?? 0,
             suppressRewrites: input.suppress?.on === true,
             ignoredStreak: input.suppress?.streak ?? 0,
             historyActive: input.historyActive,

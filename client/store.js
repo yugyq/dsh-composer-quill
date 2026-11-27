@@ -246,7 +246,15 @@
       const late = () => streamSession !== null && store.getSnapshot().sessionId !== streamSession
   // Every frame carries the session it was requested for. A stream outlives a
   // session switch; without this the frames of the old one land in the new one.
-  const belongs = (fromSession) => fromSession === undefined || store.getSnapshot().sessionId === fromSession
+  // A frame that no longer belongs here is dropped; counting it turns a silent
+  // race into something the log can show.
+  let droppedFrames = 0
+  const belongs = (fromSession) => {
+    if (fromSession === undefined) return true
+    if (store.getSnapshot().sessionId === fromSession) return true
+    droppedFrames += 1
+    return false
+  }
       const cancel = () => {
         if (controller !== null) {
           controller.abort()
@@ -289,6 +297,8 @@
           lastSuppressed = false
           return was
         },
+        /** How many frames were dropped because their session had moved on. */
+        streamDropped: () => droppedFrames,
         cancel: () => {
           cancel()
           if (!streaming) return
