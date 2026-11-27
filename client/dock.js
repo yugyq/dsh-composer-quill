@@ -185,7 +185,13 @@
       const remainder = followRemainder(composed, liveText.replace(/\s+$/, ''))
       const fresh = state.forDraft === draft || state.forDraft === draftBase
       const alreadyInEditor = proposalIsStale(current, liveText)
-      const nextActive = nextEnabled && !running && draftEmpty && state.kind === 'next' && current !== '' && !alreadyInEditor
+      // The candidates belong to the Session that asked for them: after a switch the
+      // store still holds the previous one's, and an empty composer makes every other
+      // condition true (issue #10).
+      const nextActive = nextVisible({
+        nextEnabled, running, draftEmpty, kind: state.kind, sessionId,
+        storeSessionId: state.sessionId, current, alreadyInEditor,
+      })
       const composeActive = composeEnabled && !running
         && state.kind === 'compose'
         && state.sessionId === sessionId

@@ -220,6 +220,24 @@ const COVERED_DEBOUNCE_MS = 1200
       return typeof live.draft === 'string' && live.draft.trim() === ''
     }
 
+    /**
+     * Whether the dock may paint the next-message candidates it is holding. The store
+     * outlives a Session switch: after the switch it still says kind 'next' with the
+     * previous Session's candidates, and the empty composer makes every other condition
+     * true — the first sentence of the old Session then appeared in the new one
+     * (issue #10). The candidates belong to whoever asked for them.
+     */
+    function nextVisible(input) {
+      const live = input ?? {}
+      if (live.nextEnabled === false || live.running === true) return false
+      if (live.draftEmpty !== true) return false
+      if (live.kind !== 'next') return false
+      if (live.sessionId === null || live.sessionId === undefined) return false
+      if (live.storeSessionId !== live.sessionId) return false
+      if (live.alreadyInEditor === true) return false
+      return typeof live.current === 'string' && live.current !== ''
+    }
+
     /** Read an SSE compose response, falling back to a whole JSON body. */
     /** Headers every request needs, so the two transports cannot drift apart. */
     function requestHeaders(accept) {

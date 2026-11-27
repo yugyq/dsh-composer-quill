@@ -244,6 +244,24 @@ const COVERED_DEBOUNCE_MS = 1200
       return typeof live.draft === 'string' && live.draft.trim() === ''
     }
 
+    /**
+     * Whether the dock may paint the next-message candidates it is holding. The store
+     * outlives a Session switch: after the switch it still says kind 'next' with the
+     * previous Session's candidates, and the empty composer makes every other condition
+     * true — the first sentence of the old Session then appeared in the new one
+     * (issue #10). The candidates belong to whoever asked for them.
+     */
+    function nextVisible(input) {
+      const live = input ?? {}
+      if (live.nextEnabled === false || live.running === true) return false
+      if (live.draftEmpty !== true) return false
+      if (live.kind !== 'next') return false
+      if (live.sessionId === null || live.sessionId === undefined) return false
+      if (live.storeSessionId !== live.sessionId) return false
+      if (live.alreadyInEditor === true) return false
+      return typeof live.current === 'string' && live.current !== ''
+    }
+
     /** Read an SSE compose response, falling back to a whole JSON body. */
     /** Headers every request needs, so the two transports cannot drift apart. */
     function requestHeaders(accept) {
@@ -3073,7 +3091,13 @@ const COVERED_DEBOUNCE_MS = 1200
       const remainder = followRemainder(composed, liveText.replace(/\s+$/, ''))
       const fresh = state.forDraft === draft || state.forDraft === draftBase
       const alreadyInEditor = proposalIsStale(current, liveText)
-      const nextActive = nextEnabled && !running && draftEmpty && state.kind === 'next' && current !== '' && !alreadyInEditor
+      // The candidates belong to the Session that asked for them: after a switch the
+      // store still holds the previous one's, and an empty composer makes every other
+      // condition true (issue #10).
+      const nextActive = nextVisible({
+        nextEnabled, running, draftEmpty, kind: state.kind, sessionId,
+        storeSessionId: state.sessionId, current, alreadyInEditor,
+      })
       const composeActive = composeEnabled && !running
         && state.kind === 'compose'
         && state.sessionId === sessionId
@@ -3767,6 +3791,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

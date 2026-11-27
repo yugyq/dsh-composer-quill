@@ -1273,6 +1273,26 @@ check('a picture in an empty composer is a new next-message question', () => {
   assert.equal(ask({ live: live({ enabled: false }) }), false, 'the whole plugin is off')
 })
 
+check('the previous Session next-message candidates are not shown in this one', () => {
+  const { nextVisible } = moduleExports.__test
+  const live = (over) => ({
+    nextEnabled: true, running: false, draftEmpty: true, kind: 'next',
+    sessionId: 's-new', storeSessionId: 's-new', current: '这个仓库是干什么用的？',
+    alreadyInEditor: false, ...over,
+  })
+  assert.equal(nextVisible(live({})), true, 'same Session, empty composer: show the candidates')
+  assert.equal(nextVisible(live({ storeSessionId: 's-old' })), false, 'the store still belongs to the Session we left')
+  assert.equal(nextVisible(live({ storeSessionId: 's-old', current: '老会话的开场白' })), false, 'and its text must not appear')
+  assert.equal(nextVisible(live({ storeSessionId: null })), false, 'a store with no Session cannot belong to this one')
+  assert.equal(nextVisible(live({ sessionId: null })), false, 'no Session, nothing to show')
+  assert.equal(nextVisible(live({ current: '' })), false, 'nothing to show')
+  assert.equal(nextVisible(live({ kind: 'compose' })), false, 'compose proposals take the other path')
+  assert.equal(nextVisible(live({ draftEmpty: false })), false, 'a draft hides the next-message candidates')
+  assert.equal(nextVisible(live({ alreadyInEditor: true })), false, 'already typed out')
+  assert.equal(nextVisible(live({ running: true })), false, 'the assistant is answering')
+  assert.equal(nextVisible(live({ nextEnabled: false })), false, 'switched off')
+})
+
 check('a draft and its attachments make one signature', () => {
   const { requestSignature, signatureAttachmentKey } = moduleExports.__test
   assert.equal(signatureAttachmentKey(requestSignature('你好', 'image:r1:1')), 'image:r1:1')
