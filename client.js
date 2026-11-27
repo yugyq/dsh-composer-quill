@@ -1110,6 +1110,8 @@ const COVERED_DEBOUNCE_MS = 1200
     // A rolling list of the most recent results: three kinds per draft (a tail, a
     // rewrite, a next message) across a handful of drafts.
     const SUGGEST_MAX = 60
+    /** Records are only meaningful while the same build is writing and reading them. */
+    const BUILD_TAG = typeof BUILD === 'string' ? BUILD : ''
 
     // Parsing this map on every keystroke was measurable; comparing the raw
     // string keeps the parse rare while still noticing another tab's writes.
@@ -1177,6 +1179,7 @@ const COVERED_DEBOUNCE_MS = 1200
         // 'append' for a tail, 'full' for a rewrite or a next message: the display
         // derives it anyway, but storing it keeps the record self-describing.
         mode: mode === 'append' || mode === 'full' ? mode : '',
+        build: BUILD_TAG,
       }
       const keys = Object.keys(map)
       if (keys.length > SUGGEST_MAX) {
@@ -1201,6 +1204,7 @@ const COVERED_DEBOUNCE_MS = 1200
         at: Date.now(),
         version: '',
         mode: '',
+        build: BUILD_TAG,
       }
       writeSuggestions(map)
     }
@@ -1208,13 +1212,19 @@ const COVERED_DEBOUNCE_MS = 1200
     function saidNothing(sessionId, kind, draft) {
       if (sessionId === null) return false
       const map = readSuggestions()
-      return map[suggestionKey(sessionId, `none-${kind}`, draft, syncEpoch(sessionId))] !== undefined
+      const entry = map[suggestionKey(sessionId, `none-${kind}`, draft, syncEpoch(sessionId))]
+      return entry !== undefined && entry.build === BUILD_TAG
     }
 
     function loadSuggestion(sessionId, kind, draft) {
       if (sessionId === null) return null
       const entry = readSuggestions()[suggestionKey(sessionId, kind, draft, syncEpoch(sessionId))]
       if (entry === null || typeof entry !== 'object' || !Array.isArray(entry.items)) return null
+      // A suggestion written by another build was written by other rules: the
+      // prompt, the trimming and the shape of a candidate all change between
+      // releases, so replaying one is replaying a stranger's answer. Records
+      // without a build predate this check and are treated the same way.
+      if (entry.build !== BUILD_TAG) return null
       if (Date.now() - Number(entry.at ?? 0) > SUGGEST_TTL_MS) return null
       // The key already carries the Session and the turn counter, so "the
       // conversation has not advanced" is decided there. Comparing the raw message

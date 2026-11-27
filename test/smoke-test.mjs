@@ -1933,6 +1933,26 @@ check('stored suggestions can be listed and cleared per session', () => {
   window.localStorage.clear()
 })
 
+check('a suggestion written by another build is not replayed', () => {
+  const { saveSuggestion, loadSuggestion } = moduleExports.__test
+  window.localStorage.clear()
+  saveSuggestion('s-build', 'next', '', ['这一句是这一版写下的'], '0', 'full')
+  // Same build: reusable.
+  assert.deepEqual(loadSuggestion('s-build', 'next', ''), ['这一句是这一版写下的'])
+  // Patch the record the way an older build left it behind.
+  const key = 'dsh.composer-quill.suggestions'
+  const map = JSON.parse(window.localStorage.getItem(key))
+  const only = Object.keys(map)[0]
+  map[only].build = '0.0.0-old'
+  window.localStorage.setItem(key, JSON.stringify(map))
+  assert.equal(loadSuggestion('s-build', 'next', ''), null, 'another build wrote this')
+  // Records that predate the tag are just as foreign.
+  delete map[only].build
+  window.localStorage.setItem(key, JSON.stringify(map))
+  assert.equal(loadSuggestion('s-build', 'next', ''), null, 'no tag means no build')
+  window.localStorage.clear()
+})
+
 check('the turn counter, not the message count, decides reuse', () => {
   const { saveSuggestion, loadSuggestion, bumpEpoch, syncEpoch } = moduleExports.__test
   window.localStorage.clear()
