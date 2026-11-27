@@ -1,6 +1,6 @@
 {
   "name": "dsh-composer-quill",
-  "version": "0.31.66",
+  "version": "0.32.0",
   "type": "module",
   "description": "在 DSH 的输入框里提前把话写好：回合结束后给出下一句，打字时补完后半句，顺手修掉错字和标点。",
   "license": "MIT",
@@ -22,6 +22,8 @@
   "files": [
     "index.js",
     "client.js",
+    "client",
+    "dev/tools/build-client.mjs",
     "cordis.patch.yml",
     "locale/*.json",
     "docs/ARCHITECTURE.md",
@@ -72,11 +74,13 @@
     "access": "public"
   },
   "scripts": {
-    "test": "node smoke-test.mjs",
-    "test:ui": "npm run harness:build && python dev/verify_daily.py",
+    "test": "node test/smoke-test.mjs",
+    "test:ui": "npm run harness:build && python dev/verify/verify_daily.py",
     "test:all": "npm test && npm run test:ui",
-    "test:log": "node dev/summarize-log.mjs 1",
-    "test:ui:retry": "python dev/verify_with_retry.py --attempts 2 --threshold 3",
+    "test:log": "node dev/tools/summarize-log.mjs 1",
+    "test:ui:retry": "python dev/verify/verify_with_retry.py --attempts 2 --threshold 3",
+    "build:client": "node dev/tools/build-client.mjs",
+    "check:client": "node dev/tools/build-client.mjs --check",
     "harness:build": "node dev/harness/build.mjs",
     "harness:install": "npm ci --prefix dev/harness --no-audit --no-fund"
   }

@@ -1,0 +1,321 @@
+// --- ghost-layer.js — concatenated into client.js by dev/tools/build-client.mjs ---
+    /**
+     * View-only inline ghost layer. It lives on <body> as a fixed layer, so the
+     * composer's own overflow and stacking cannot clip it.
+     */
+    function createGhostLayer() {
+      let host = null
+      let textEl = null
+      let textNode = null
+      // Floats on the first line only: wrapped lines then start at the content edge.
+      let spacerEl = null
+      // 编辑框自己的 min-height，提案撑高之前先存下来。
+      let savedMinHeight = null
+      // Parent we made positioned, so its own style can be put back.
+      let positionedParent = null
+      let target = null
+      let placeholderEl = null
+      let placeholderDisplay = ''
+
+      const restorePlaceholder = () => {
+        if (placeholderEl !== null) {
+          placeholderEl.style.display = placeholderDisplay
+          placeholderEl = null
+          placeholderDisplay = ''
+        }
+      }
+
+      const hidePlaceholder = () => {
+        const next = document.querySelector('[data-composer-placeholder]')
+        if (next === null) return
+        if (next !== placeholderEl) {
+          restorePlaceholder()
+          placeholderEl = next
+          placeholderDisplay = next.style.display
+          next.style.display = 'none'
+        }
+      }
+
+      const copyFont = (style) => {
+        Object.assign(textEl.style, {
+          fontFamily: style.fontFamily,
+          fontSize: style.fontSize,
+          fontWeight: style.fontWeight,
+          fontStyle: style.fontStyle,
+          lineHeight: style.lineHeight,
+          letterSpacing: style.letterSpacing,
+          direction: style.direction,
+        })
+      }
+
+      const place = (left, top, width, maxWidth, align, maxHeight = null) => {
+        Object.assign(textEl.style, {
+          // Sub-pixel precision: the origin is fractional, so rounding adds up.
+            left: `${Math.round(left * 10) / 10}px`,
+          top: `${Math.round(top * 10) / 10}px`,
+          width: width === null ? 'auto' : `${Math.round(width)}px`,
+          maxWidth: maxWidth === null ? 'none' : `${Math.round(maxWidth)}px`,
+          // A fixed layer is not clipped by the editor: without a height limit a long
+          // tail wrapped below the composer and painted over the page instead.
+          maxHeight: maxHeight === null ? 'none' : `${Math.round(Math.max(18, maxHeight))}px`,
+          textAlign: align,
+        })
+      }
+
+      /**
+       * Clip has to look like punctuation, not like a broken glyph: when the
+       * composer shows one line and the tail needs two, cut the text and append an
+       * ellipsis. Tab still inserts the whole proposal — only the preview shortens.
+       */
+      const fitToHeight = (limit) => {
+        if (textEl === null || !(limit > 0)) return
+        const full = textNode === null ? '' : textNode.nodeValue ?? ''
+        if (full === '' || textEl.scrollHeight <= limit + 1) return
+        // 灰字是浮层，不会撑高输入框：先借最多两行的高度，让它像正文一样换行。
+        // 每次重新判断：借过一次后更长的尾巴仍需要更多高度，否则只能被省略号截断。
+        if (target !== null) {
+          const line = Number.parseFloat(getComputedStyle(textEl).lineHeight) || 24
+          const want = Math.min(textEl.scrollHeight, limit + line * 2)
+          const current = Number.parseFloat(getComputedStyle(target).minHeight) || 0
+          if (want > current + 2) {
+            if (savedMinHeight === null) savedMinHeight = target.style.minHeight
+            target.style.minHeight = `${Math.round(want)}px`
+            return
+          }
+        }
+        const chars = Array.from(full)
+        let low = 0
+        let high = chars.length
+        while (low < high) {
+          const mid = Math.ceil((low + high) / 2)
+          if (textNode !== null) textNode.nodeValue = `${chars.slice(0, mid).join('')}…`
+          if (textEl.scrollHeight <= limit + 1) low = mid
+          else high = mid - 1
+        }
+        if (textNode !== null) textNode.nodeValue = `${chars.slice(0, Math.max(1, low)).join('')}…`
+      }
+
+      /** The host's own origin: caret coordinates are viewport-relative. */
+      const hostOrigin = () => {
+        const rect = host === null ? null : host.getBoundingClientRect()
+        return rect === null ? { left: 0, top: 0 } : { left: rect.left, top: rect.top }
+      }
+      const layoutBox = () => {
+        if (target === null || target === undefined) return false
+        const style = getComputedStyle(target)
+        const rect = target.getBoundingClientRect()
+        const clip = clipBox()
+        const px = (value) => Number.parseFloat(value) || 0
+        const left = Math.max(rect.left + px(style.borderLeftWidth) + px(style.paddingLeft), clip.left)
+        const top = Math.max(rect.top + px(style.borderTopWidth) + px(style.paddingTop), clip.top)
+        const origin = hostOrigin()
+        place(
+          left - origin.left,
+          top - origin.top,
+          Math.max(0, Math.min(rect.width - px(style.paddingLeft) - px(style.paddingRight), clip.right - left)),
+          null,
+          style.textAlign,
+          clip.bottom - top,
+        )
+        fitToHeight(clip.bottom - top)
+        copyFont(style)
+      }
+
+      /**
+       * The box the ghost may paint inside: the nearest ancestor that really clips
+       * (overflow) or draws the composer card. The editor itself is not a limit —
+       * it grows taller than the visible card and scrolls.
+       */
+      const clipBox = () => {
+        // 测试桩里可能还没有编辑器：没有目标就没有裁切框。
+        if (target === null || target === undefined) return { left: 0, right: 0, top: 0, bottom: 0 }
+        const targetRect = target.getBoundingClientRect()
+        let node = target.parentElement
+        for (let depth = 0; node !== null && depth < 8; depth += 1) {
+          const style = getComputedStyle(node)
+          const clips = style.overflowX !== 'visible' || style.overflowY !== 'visible'
+          const radius = Number.parseFloat(style.borderRadius) || 0
+          if (clips || radius >= 8) {
+            const rect = node.getBoundingClientRect()
+            const px = (value) => Number.parseFloat(value) || 0
+            return {
+              left: rect.left + px(style.borderLeftWidth) + px(style.paddingLeft),
+              right: rect.right - px(style.borderRightWidth) - px(style.paddingRight),
+              top: rect.top + px(style.borderTopWidth) + px(style.paddingTop),
+              bottom: rect.bottom - px(style.borderBottomWidth) - px(style.paddingBottom),
+            }
+          }
+          node = node.parentElement
+        }
+        return { left: targetRect.left, right: targetRect.right, top: targetRect.top, bottom: targetRect.bottom }
+      }
+
+      const layoutCaret = () => {
+        if (target === null || target === undefined) return false
+        const style = getComputedStyle(target)
+        const px = (value) => Number.parseFloat(value) || 0
+        const box = target.getBoundingClientRect()
+        const clip = clipBox()
+        // A fixed layer is not clipped by the editor, so every limit comes from the
+        // visible composer box instead of the editor's own (taller) box.
+        const contentLeft = Math.max(box.left + px(style.borderLeftWidth) + px(style.paddingLeft), clip.left)
+        const contentRight = Math.min(box.right - px(style.borderRightWidth) - px(style.paddingRight), clip.right)
+        const contentBottom = Math.min(box.bottom - px(style.borderBottomWidth) - px(style.paddingBottom), clip.bottom)
+        let rect = caretRect()
+        // A collapsed-range rect at the line start is a measurement failure, not a caret
+        // at the start: fall back to the last character's right edge — unless the caret
+        // really does start a line (empty line after a <br>).
+        if (rect === null || (rect.fromBlock !== true && rect.left <= contentLeft + 2)) {
+          const edge = edgeOfText(lastTextNodeOf(target))
+          if (edge !== null) rect = edge
+        }
+        if (rect === null) return false
+        // A character rect is the font box, not the line box, and the extra leading is
+        // not split evenly (fonts carry more space below).
+        const lineHeight = px(style.lineHeight) || rect.height
+        const glyphHeight = rect.height || lineHeight
+        const leading = Math.max(0, Math.round((lineHeight - glyphHeight) / 2))
+        const origin = hostOrigin()
+        const lineTop = rect.top - leading - origin.top
+        const indentWidth = Math.max(0, rect.left - contentLeft)
+        const blockWidth = Math.max(120, contentRight - contentLeft)
+        // A full-width block starting at the content edge, with the caret offset carried
+        // by a one-line float: wrapped lines fall back to the left edge instead of keeping
+        // the caret's indent.
+        // 可用高度必须在同一个坐标空间里算：lineTop 相对 host，contentBottom 是视口。
+        const limit = contentBottom - (rect.top - leading)
+        place(contentLeft - origin.left, lineTop, blockWidth, null, 'left', limit)
+        if (spacerEl !== null) {
+          const line = Number.parseFloat(style.lineHeight) || rect.height || 24
+          spacerEl.style.width = `${Math.round(indentWidth)}px`
+          spacerEl.style.height = `${Math.round(line)}px`
+        }
+        fitToHeight(limit)
+        copyFont(style)
+        return true
+      }
+
+      const clear = () => {
+        if (positionedParent !== null) {
+          positionedParent.style.position = ''
+          positionedParent = null
+        }
+        if (target !== null && savedMinHeight !== null) {
+          target.style.minHeight = savedMinHeight
+          savedMinHeight = null
+        }
+        if (host !== null) {
+          host.remove()
+          host = null
+        }
+        textEl = null
+        restorePlaceholder()
+        target = null
+      }
+
+      const mount = () => {
+        const editor = editorEl()
+        if (editor === null) return false
+        // A previous mount can survive a body re-render as a detached node, and a
+        // second dock instance would draw a second ghost: start clean.
+        for (const stale of document.querySelectorAll('[data-composer-quill="layer"]')) stale.remove()
+        target = editor
+        host = document.createElement('div')
+        host.setAttribute('data-composer-quill', 'layer')
+        host.setAttribute('aria-hidden', 'true')
+        // Inside the composer, not on <body>: the composer clips it, dialogs cover it,
+        // and the tail wraps inside the same box the text does.
+        host.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;z-index:0;pointer-events:none;'
+        textEl = document.createElement('div')
+        textEl.setAttribute('data-composer-quill', 'text')
+        spacerEl = document.createElement('i')
+        spacerEl.setAttribute('data-composer-quill', 'spacer')
+        spacerEl.style.cssText = 'float:left;width:0;height:0;pointer-events:none;'
+        textNode = document.createTextNode('')
+        textEl.appendChild(spacerEl)
+        textEl.appendChild(textNode)
+        textEl.style.cssText = [
+          'position:absolute',
+          'white-space:pre-wrap',
+          'word-break:break-word',
+          'overflow-wrap:anywhere',
+          'color:var(--dsw-alias-label-tertiary, #8a8f98)',
+          'opacity:.9',
+          'pointer-events:none',
+          'user-select:none',
+          'overflow:hidden',
+          'display:none',
+        ].join(';')
+        host.appendChild(textEl)
+        const parent = editor.parentElement
+        const parentStyle = parent === null ? null : getComputedStyle(parent)
+        if (parent !== null && parentStyle !== null && parentStyle.position === 'static') {
+          parent.style.position = 'relative'
+          positionedParent = parent
+        }
+        ;(parent ?? document.body).appendChild(host)
+        return true
+      }
+
+      /** Facts about what landed in the DOM, for the paint diagnostic. */
+      const debug = () => {
+        const editor = editorEl()
+        const style = textEl === null ? null : getComputedStyle(textEl)
+        const textRect = textEl === null ? null : textEl.getBoundingClientRect()
+        const editorRect = editor === null ? null : editor.getBoundingClientRect()
+        return {
+          editorFound: editor !== null,
+          mounted: host !== null && host.isConnected,
+          editorRect: editorRect === null ? null : {
+            x: Math.round(editorRect.x), y: Math.round(editorRect.y),
+            w: Math.round(editorRect.width), h: Math.round(editorRect.height),
+          },
+          textRect: textRect === null ? null : {
+            x: Math.round(textRect.x), y: Math.round(textRect.y),
+            w: Math.round(textRect.width), h: Math.round(textRect.height),
+          },
+          clip: (() => {
+            const box = clipBox()
+            return { left: Math.round(box.left), right: Math.round(box.right), top: Math.round(box.top), bottom: Math.round(box.bottom) }
+            })(),
+          maxHeight: style === null ? null : style.maxHeight,
+          minHeight: (() => { const editor = editorEl(); return editor === null ? null : editor.style.minHeight || '(none)' })(),
+          ghostHeight: textEl === null ? null : textEl.scrollHeight,
+          overflow: style === null ? null : style.overflow,
+          color: style === null ? null : style.color,
+          opacity: style === null ? null : style.opacity,
+          display: style === null ? null : style.display,
+          caret: (() => {
+            const rect = caretRect()
+            return rect === null ? null : { left: Math.round(rect.left), top: Math.round(rect.top), h: Math.round(rect.height) }
+          })(),
+        }
+      }
+
+      /**
+       * Paint one frame. `anchor: 'box'` puts the text at the editor's content
+       * box, `'caret'` at the caret, otherwise nothing is painted.
+       */
+      const render = ({ inlineText, anchor }) => {
+        const text = typeof inlineText === 'string' ? inlineText : ''
+        if (text === '') {
+          clear()
+          return
+        }
+        if (host === null || !host.isConnected) {
+          if (!mount()) return
+        }
+        if (editorEl() !== target) {
+          clear()
+          if (!mount()) return
+        }
+        if (textNode !== null && textNode.nodeValue !== text) textNode.nodeValue = text
+        textEl.style.display = ''
+        hidePlaceholder()
+        if (anchor === 'caret' && layoutCaret()) return
+        layoutBox()
+      }
+
+      return { render, clear, isMounted: () => host !== null && host.isConnected, debug }
+    }
+

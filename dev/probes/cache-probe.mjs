@@ -4,14 +4,16 @@
  * Same system prompt every call. Five calls per layout, each with a *different* draft,
  * the way typing produces them. Reports the cache hit the API itself returns.
  *
- *   node dev/cache-probe.mjs
+ *   node dev/probes/cache-probe.mjs
  */
 import fs from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 const MODEL = 'deepseek-flash'
 
 // ---- key, never printed
-const credText = fs.readFileSync('C:/Users/dqdyfrw/.dsh/.credentials.yaml', 'utf8')
+const credText = fs.readFileSync(process.env.DSH_QUILL_CREDENTIALS ?? join(homedir(), '.dsh', '.credentials.yaml'), 'utf8')
 const keys = [...new Set([...credText.matchAll(/(sk-[A-Za-z0-9_-]{16,})/g)].map((m) => m[1]))]
 let key = null
 for (const candidate of keys) {

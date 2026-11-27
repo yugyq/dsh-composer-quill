@@ -23,7 +23,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_SCENARIOS = HERE / "verify_daily.py"
-DEFAULT_LEDGER = HERE / "flake-ledger.json"
+# The ledger stays at dev/ (one level up), next to the other local state files.
+DEFAULT_LEDGER = HERE.parent / "flake-ledger.json"
 RESULT = re.compile(r"^\s*(PASS|FAIL)\s+(.+?)\s{2,}(.*)$")
 
 

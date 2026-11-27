@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-HARNESS = Path(__file__).resolve().parent / "harness" / "index.html"
+HARNESS = Path(__file__).resolve().parent.parent / "harness" / "index.html"
 URL = HARNESS.as_uri()
 def _chrome_path():
     """Chromium for Playwright, located at runtime instead of hard-coded."""

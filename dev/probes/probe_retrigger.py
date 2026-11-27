@@ -2,7 +2,7 @@
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-HARNESS = (Path(__file__).resolve().parent / "harness" / "index.html")
+HARNESS = (Path(__file__).resolve().parent.parent / "harness" / "index.html")
 
 def chrome():
     root = Path.home() / "AppData" / "Local" / "ms-playwright"

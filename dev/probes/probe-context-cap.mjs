@@ -3,7 +3,7 @@
  * prompt size under the current budget. Run twice — once plain, once with
  * DSH_QUILL_CONTEXT=full — to compare the caps.
  */
-const { __test } = await import('../index.js')
+const { __test } = await import('../../index.js')
 const { produceCompose } = __test
 
 // ~420 characters, so ten rows blow past both the 1600 and 3200 character caps.

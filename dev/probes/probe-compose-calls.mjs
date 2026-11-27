@@ -5,7 +5,7 @@
  */
 import fs from 'node:fs'
 
-const { __test } = await import('../index.js')
+const { __test } = await import('../../index.js')
 const { produceCompose } = __test
 if (typeof produceCompose !== 'function') {
   console.log('produceCompose 未导出，先导出它')

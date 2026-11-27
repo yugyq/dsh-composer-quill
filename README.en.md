@@ -17,7 +17,7 @@ dsh plugin --profile desktop add dsh-composer-quill
 - **Interrupted mid-thought**: switch away and back, the suggestion is still there
 - **The paragraph you retype every day**: pulled from your own history, no model call
 
-Everything stays on your machine: requests go through the model route you already configured, there is no third-party server, and nothing is reported.
+Requests go through the model route you already configured: there is no third-party server, and nothing is reported. "On your machine" only means no extra hop, though — the last two turns and your draft are sent to the model service you configured (usually a cloud one), and masking is best-effort over nine shapes.
 
 ## Four kinds of suggestion
 
@@ -84,7 +84,7 @@ For running from source, checking which build is live, and making edits take eff
 
 Next message and completion are independent switches; turn one off to keep only the other.
 
-**Usage**: the panel shows today's and lifetime call counts, input and output tokens, and a cost converted to CNY, with a reset for the lifetime totals. Amounts are booked at the peak or off-peak price in force *when the call happened* (peak is UTC weekdays 01:00–04:00 and 06:00–10:00). The ledger is `~/.dsh/composer-quill-usage.json`, numbers only.
+**Usage**: the panel shows today's and lifetime call counts, input and output tokens, and a cost converted to CNY, with a reset for the lifetime totals. Amounts are booked at the peak or off-peak price in force *when the call happened* (peak is UTC weekdays 01:00–04:00 and 06:00–10:00). The ledger is `<profile>/composer-quill-usage.json`, numbers only.
 
 **Acceptance feedback**: taking with `Tab`, dismissing with `Esc`, and sending without either are all counted, and reorder the next-message candidates.
 
@@ -92,10 +92,11 @@ Settings live in the browser's `localStorage`; nothing is sent anywhere.
 
 ## Privacy
 
-- **Local only**: completion requests use the model route configured in DSH. No third-party server, no reporting.
-- **Credentials masked**: before context leaves the machine, nine shapes become `[redacted …]` — private key blocks, AWS `AKIA…`, GitHub `ghp_` / `github_pat_`, OpenAI `sk-…`, Stripe, Slack `xox…`, JWTs, `Bearer …`.
+- **No third-party relay**: completion requests use the model route configured in DSH. There is no server of this plugin's own and nothing is reported.
+- **But content does leave your machine**: the last two turns, a style summary and your draft go to the model service you configured — usually a cloud one. This plugin does not control how that service stores or uses them.
+- **Masking is best-effort**: before context leaves, nine credential shapes become `[redacted …]` — private key blocks, AWS `AKIA…`, GitHub `ghp_` / `github_pat_`, OpenAI `sk-…`, Stripe, Slack `xox…`, JWTs, `Bearer …`. Secrets outside those shapes are not recognized.
 - **The draft is masked too**: a secret-shaped string in the draft becomes `[redacted …]` as well, and a rewrite carrying that marker is discarded — this run gives no suggestion rather than sending the secret out.
-- **Three local files**: diagnostics at `~/.dsh/composer-quill.log`, the usage ledger at `~/.dsh/composer-quill-usage.json` (counts and amounts only), and the suggestion cache at `~/.dsh/composer-quill-cache.json` (suggestion text; delete it to clear). All three share one directory and follow `DSH_PROFILE_DIR` / `DSH_HOME`.
+- **Three local files**: diagnostics `composer-quill.log`, the usage ledger `composer-quill-usage.json` (counts and amounts only), and the suggestion cache `composer-quill-cache.json` (suggestion text, in plain text; delete it to clear). All three live in one state directory: `$DSH_PROFILE_DIR` when a profile is set, else `$DSH_HOME`, else `~/.dsh`. Tests and diagnostics can pin it with `DSH_COMPOSER_QUILL_STATE_DIR`.
 - **Routes are authenticated**: the Host side requires this launch cycle's token or a same-origin browser request; the history route accepts the token only.
 
 ## How it works
@@ -111,11 +112,10 @@ Details in [Architecture](docs/ARCHITECTURE.md) and [Protocol](docs/PROTOCOL.md)
 
 ## Tests
 
-149 unit checks and 66 browser scenarios, both in CI. The scenarios cover the real rhythms: fast typing, pausing for a suggestion, cancelling, switching Sessions, long-text layout.
-
+158 unit checks and 66 browser scenarios, both in CI. The scenarios cover the real rhythms: fast typing, pausing for a suggestion, cancelling, switching Sessions, long-text layout.
 ```bash
-npm test                          # 132 offline unit checks
-npm run test:ui                   # 55 browser scenarios (bundled simulator)
+npm test                          # 156 offline unit checks (including client.js freshness)
+npm run test:ui                   # 64 browser scenarios (bundled simulator)
 npm test -- --filter=transcript   # run one behaviour
 npm test -- --list                # list every case
 ```
@@ -130,7 +130,7 @@ The live-machine scripts, audit probes and the simulator live in `dev/`; see [De
 
 ## Diagnostics
 
-Start with `~/.dsh/composer-quill.log`; one JSON object per line.
+Start with `<profile>/composer-quill.log`; one JSON object per line.
 
 - `request` / `cache-hit` / `cache-miss`: whether a model was actually called; a miss records what went into the key.
 - `result`: how many candidates came back; failures read `skipped` / `empty-thread` / `wrong-language`.

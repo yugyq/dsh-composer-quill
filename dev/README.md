@@ -28,7 +28,7 @@ if (now.phase === 'ready' && now.sessionId === 's-nl') break
 
 ## 前缀缓存的结论
 
-dev/cache-probe.mjs 与 dev/verify-cache.mjs 用真实模型量过：**同内容、只换顺序**，命中率差别极大。
+dev/probes/cache-probe.mjs 与 dev/probes/verify-cache.mjs 用真实模型量过：**同内容、只换顺序**，命中率差别极大。
 
 \\n布局                      prompt  命中  未命中
 草稿在前（改前）             814     0    814
@@ -40,7 +40,7 @@ dev/cache-probe.mjs 与 dev/verify-cache.mjs 用真实模型量过：**同内容
 
 ## 提示词 A/B 的结论
 
-dev/ab-prompt.mjs 用真实模型跑过一轮（每档 3 次 × 5 个场景）：
+dev/probes/ab-prompt.mjs 用真实模型跑过一轮（每档 3 次 × 5 个场景）：
 
 | 改动 | 结论 |
 | --- | --- |
@@ -64,8 +64,8 @@ dev/ab-prompt.mjs 用真实模型跑过一轮（每档 3 次 × 5 个场景）�
 | `probe_retrigger.py` | 三条重发路径：建议出现后再打字、模型说无改动后静置、首次失败后的自动重试 |
 
 ```bash
-node dev/probe-short-draft.mjs
-python dev/probe_client_requests.py
+node dev/probes/probe-short-draft.mjs
+python dev/probes/probe_client_requests.py
 ```
 
 用处：上一轮「建议消失」就是 `probe-short-draft.mjs` 里 2 字草稿走错路径暴露出来的。
@@ -81,7 +81,10 @@ dev/
 │   ├── index.html    承载页面（加载 bundle.js）
 │   ├── bundle.js     构建产物（.gitignore 忽略，需本地构建）
 │   └── package.json  react / react-dom / esbuild
-└── verify_*.py       真机脚本（Playwright 驱动真实 DSH 实例）
+├── tools/            build-client.mjs（client/ → client.js）、日志汇总、账本重建
+├── probes/           一次性探针：真实模型或模拟器，不连 CI
+├── verify/           Playwright：verify_daily.py（模拟器场景）、真机脚本、重试器
+└── audit/            对抗性审计脚本
 ```
 
 ## 模拟器
@@ -92,10 +95,10 @@ npm install                      # 首次：react / react-dom / esbuild
 node node_modules/esbuild/bin/esbuild src.js --bundle --format=iife --target=chrome120 --outfile=bundle.js
 
 cd ..
-python verify_daily.py           # 55 个场景，全绿即通过
+npm run test:ui                  # 64 个场景，全绿即通过（或 python dev/verify/verify_daily.py）
 ```
 
-模拟器页面通过 `file://` 打开，`src.js` 里 `await import('../../client.js')` 直接引用**插件源码**，所以改完 `client.js` 必须重新构建 bundle，否则跑的是旧代码（这是本仓库最容易踩的坑）。
+模拟器页面通过 `file://` 打开，`src.js` 里 `await import('../../client.js')` 直接引用**插件产物**；`client.js` 由 `client/` 源文件拼接生成（仓库根 `npm run build:client`），所以既改 `client/` 又改 `client.js` 之后都要重新构建 bundle，否则跑的是旧代码（这是本仓库最容易踩的坑）。
 
 页面暴露的调试接口：`window.__harness`（`type` / `typeLive` / `key` / `press` / `rec` / `snapshot` / `store` / `accept` / `setComposeMode` / `setSession`）。
 
@@ -104,13 +107,13 @@ python verify_daily.py           # 55 个场景，全绿即通过
 都需要一个运行中的实例 URL（`dsh web: http://127.0.0.1:PORT/?token=…`）：
 
 ```powershell
-python verify_fresh_start.py "http://127.0.0.1:PORT/?token=…"
-python verify_emptyline.py  "http://127.0.0.1:PORT/?token=…"
+python dev/verify/verify_fresh_start.py "http://127.0.0.1:PORT/?token=…"
+python dev/verify/verify_emptyline.py  "http://127.0.0.1:PORT/?token=…"
 ```
 
 | 脚本 | 验证点 |
 | --- | --- |
-| `verify_daily.py` | 49 个行为场景（模拟器，不需要实例） |
+| `verify_daily.py` | 64 个行为场景（模拟器，不需要实例） |
 | `verify_harness.py` | 模拟器自身的冒烟检查 |
 | `verify_fresh_start.py` | 刚启动时状态行可用、不卡「补写中」 |
 | `verify_emptyline.py` | 空行（`<br>` 之后）灰字锚点 |

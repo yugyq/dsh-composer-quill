@@ -1,0 +1,325 @@
+// --- prelude.js — concatenated into client.js by dev/tools/build-client.mjs ---
+    const React = require('react')
+    const h = React.createElement
+
+    const NS = 'composer-quill'
+    const BUILD = '0.32.0'
+    const ROUTE = '/composer-quill/predict'
+    const BEACON = '/composer-quill/beacon'
+    /** The browser's own language, used when the Host has no style profile. */
+    function browserLocale() {
+      try {
+        return (typeof navigator !== 'undefined' && typeof navigator.language === 'string') ? navigator.language.slice(0, 24) : ''
+      } catch {
+        return ''
+      }
+    }
+
+    const TOKEN_GLOBAL = '__DSH_COMPOSER_QUILL_TOKEN__'
+    const TOKEN_HEADER = 'x-composer-quill-token'
+    // Forces a CORS preflight from any other origin; the Host relies on it.
+    const CLIENT_HEADER = 'x-composer-quill-client'
+      const NEXT_DEBOUNCE_MS = 320
+    const COMPOSE_DEBOUNCE_MS = 120
+    // Consecutive suggestions ignored before rewrites are withheld. Three is the
+    // point where the user is clearly not reading them; one accept restores them.
+    const IGNORE_STREAK_LIMIT = 2
+/** While the draft stays inside the on-screen proposal, wait this long. */
+const COVERED_DEBOUNCE_MS = 1200
+    /**
+     * Safety-net poll for the composer DOM. It has to be slower than the model's
+     * first delta (measured median ~1.9 s): firing sooner only cancels the request
+     * that was about to paint the ghost. At 700 ms a third of all requests died.
+     */
+    const RETRIGGER_INTERVAL_MS = 3000
+    const MIN_DRAFT_CHARS = 1
+    const CLIENT_TIMEOUT_MS = 20000
+    /** A stored answer older than this is not worth reusing. */
+    const SERVED_TTL_MS = 5000
+    /** Two triggers for the same draft inside this window share one call. */
+    const DEDUPE_MS = 900
+
+    const zh = {
+      'hint.accept': '按 Tab 采纳',
+      'hint.complete': '按 Tab 补全',
+      'hint.replace': '按 Tab 采用改写',
+      'hint.pending': '补写中…',
+      'hint.error': '建议失败',
+      'hint.empty': '已补写 · 无待改项',
+      'hint.accepted': '已采纳',
+      'hint.undo': '撤销',
+      'hint.retry': '重试',
+      'hint.retrying': '重试中…',
+      'hint.keys': 'Tab 采纳 · Esc 关闭 · Ctrl+Shift+Space 手动',
+      'hint.busy': '回答中 · 建议暂停',
+      'hint.history': '按 Tab 补全（历史）',
+      'hint.position': '第 {index}/{total} 条，←/→ 切换',
+      'status.prefix': '建议：',
+      'nav': '续笔',
+      'settings.title': '续笔',
+      'settings.description': '回合结束后预测下一句，打字时补写并顺带整理草稿；Tab 采用，发送还是你自己按',
+      'settings.section.capability': '能力',
+      'settings.section.behaviour': '行为',
+      'settings.section.pace': '节奏',
+      'settings.section.keys': '键盘',
+      'settings.section.learning': '学习',
+      'settings.section.usage': '消耗',
+  'settings.section.model': '模型',
+  'settings.model': '建议用哪个模型',
+  'settings.model.follow': '跟随当前会话',
+  'settings.model.loading': '读取中…',
+  'settings.model.failed': '读取失败，跟随会话',
+  'settings.model.empty': '没有可选的模型，跟随会话',
+  'settings.model.hint': '下一句、补写、改写都走这里选的模型，不影响会话本身。',
+  'settings.reasoning': '思考强度',
+  'settings.reasoning.off': '关闭（最快）',
+  'settings.reasoning.low': '低',
+  'settings.reasoning.high': '高',
+  'settings.reasoning.max': '最高',
+  'settings.reasoning.hint': '补全用不上深度思考；调高会更慢、更贵，但复杂改写可能更准。',
+  'settings.suppress': '忽略两次后暂停整段改写',
+  'settings.suppress.hint': '连续忽略两条建议后，只保留在句尾接着写；整段改写暂停，采纳一次即恢复。',
+      'usage.today': '今天',
+      'usage.session': '本会话',
+      'usage.lifetime': '累计',
+      'usage.uncosted': '未计价',
+      'usage.price': '按价目',
+      'usage.holidayNote': '节假日按工作日计价',
+      'usage.reset': '重置累计',
+      'usage.loading': '读取中…',
+      'usage.failed': '读取失败',
+      'settings.next': '下一句',
+      'settings.compose': '补写',
+      'settings.mode': '模式',
+      'settings.mode.auto': '自动',
+      'settings.mode.manual': '仅手动',
+      'settings.debounce': '停顿（毫秒）',
+      'settings.timeout': '超时（毫秒）',
+      'settings.language': '语言',
+      'settings.language.auto': '跟随系统',
+      'settings.learning': '采纳反馈',
+      'settings.learningEmpty': '还没有样本（Tab 采纳 / Esc 忽略都会计入）',
+      'settings.manualHint': '手动触发：Ctrl+Shift+Space',
+    }
+    const en = {
+      'hint.accept': 'Press Tab to accept',
+      'hint.complete': 'Press Tab to complete',
+      'hint.replace': 'Press Tab to use the rewrite',
+      'hint.pending': 'Composing…',
+      'hint.error': 'Suggestion failed',
+      'hint.empty': 'Nothing to change',
+      'hint.accepted': 'Applied',
+      'hint.undo': 'Undo',
+      'hint.retry': 'Retry',
+      'hint.retrying': 'Retrying…',
+      'hint.keys': 'Tab accepts · Esc dismisses · Ctrl+Shift+Space manually',
+      'hint.busy': 'Replying · suggestions paused',
+      'hint.history': 'Press Tab to complete from history',
+      'hint.position': 'Suggestion {index}/{total}, ←/→ to switch',
+      'status.prefix': 'Completion: ',
+      'nav': 'Quill',
+      'settings.title': 'Quill — composer completion',
+      'settings.description': 'Predicts your next message, and finishes plus tidies the draft while you type; Tab applies; you still press send',
+      'settings.section.capability': 'Capabilities',
+      'settings.section.behaviour': 'Behaviour',
+      'settings.section.pace': 'Timing',
+      'settings.section.keys': 'Keyboard',
+      'settings.section.learning': 'Learning',
+      'settings.section.usage': 'Usage',
+  'settings.section.model': 'Model',
+  'settings.model': 'Model for suggestions',
+  'settings.model.follow': 'Follow the current session',
+  'settings.model.loading': 'Loading…',
+  'settings.model.failed': 'Could not load; following the session',
+  'settings.model.empty': 'No models offered; following the session',
+  'settings.model.hint': 'Next message, completion and rewrite all use this model. The session is untouched.',
+  'settings.reasoning': 'Thinking',
+  'settings.reasoning.off': 'Off (fastest)',
+  'settings.reasoning.low': 'Low',
+  'settings.reasoning.high': 'High',
+  'settings.reasoning.max': 'Max',
+  'settings.reasoning.hint': 'Completions rarely need deep thinking; higher is slower and dearer, though a tangled rewrite may land better.',
+  'settings.suppress': 'Pause rewrites after two ignores',
+  'settings.suppress.hint': 'After two suggestions in a row go unused, only tails keep arriving; rewrites stay off until one is accepted.',
+      'usage.today': 'Today',
+      'usage.session': 'This Session',
+      'usage.lifetime': 'Lifetime',
+      'usage.uncosted': 'Not priced',
+      'usage.price': 'Priced',
+      'usage.holidayNote': 'holidays billed as weekdays',
+      'usage.reset': 'Reset',
+      'usage.loading': 'Loading…',
+      'usage.failed': 'Load failed',
+      'settings.next': 'Next message',
+      'settings.compose': 'Completion',
+      'settings.mode': 'Mode',
+      'settings.mode.auto': 'Automatic',
+      'settings.mode.manual': 'Manual only',
+      'settings.debounce': 'Pause (ms)',
+      'settings.timeout': 'Timeout (ms)',
+      'settings.language': 'Language',
+      'settings.language.auto': 'Follow system',
+      'settings.learning': 'Acceptance feedback',
+      'settings.learningEmpty': 'no samples yet (Tab accepts, Esc dismisses)',
+      'settings.manualHint': 'Trigger manually: Ctrl+Shift+Space',
+    }
+
+    function token() {
+      return typeof window[TOKEN_GLOBAL] === 'string' ? window[TOKEN_GLOBAL] : ''
+    }
+
+    /** Fire-and-forget stage report; needs no page token. */
+    function report(event, data) {
+      try {
+        const capability = token()
+        const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
+        if (capability !== '') headers[TOKEN_HEADER] = capability
+        fetch(BEACON, {
+          method: 'POST',
+          headers,
+          credentials: 'same-origin',
+          keepalive: true,
+          body: JSON.stringify({ event, hasToken: capability !== '', build: BUILD, ...data }),
+        }).catch(() => {})
+      } catch {
+        // Diagnostics only.
+      }
+    }
+
+    /** Read an SSE compose response, falling back to a whole JSON body. */
+    /** Headers every request needs, so the two transports cannot drift apart. */
+    function requestHeaders(accept) {
+      const capability = token()
+      const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
+      if (accept !== undefined) headers.accept = accept
+      if (capability !== '') headers[TOKEN_HEADER] = capability
+      return headers
+    }
+
+    async function streamRoute(url, payload, signal, handlers) {
+      const headers = requestHeaders('text/event-stream')
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          ...payload,
+          locale: browserLocale(),
+          language: currentConfig().language,
+          epoch: syncEpoch(payload.sessionId),
+          model: currentConfig().modelRoute,
+          reasoning: currentConfig().reasoning,
+        }),
+        signal,
+        credentials: 'same-origin',
+      })
+      if (!response.ok) {
+        let message = `request failed (HTTP ${response.status})`
+        try {
+          const body = await response.json()
+          if (typeof body?.error?.message === 'string' && body.error.message !== '') message = body.error.message
+        } catch {
+          // Non-JSON body: keep the status message.
+        }
+        throw Object.assign(new Error(message), { status: response.status })
+      }
+      const type = response.headers?.get?.('content-type') ?? ''
+      if (!type.includes('text/event-stream') || response.body === null || response.body === undefined) {
+        handlers.json(await response.json())
+        return
+      }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let terminal = false
+      const dispatch = (frame) => {
+        let event = 'message'
+        const dataLines = []
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim()
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+        }
+        if (dataLines.length === 0) return
+        let data = {}
+        try {
+          data = JSON.parse(dataLines.join('\n'))
+        } catch {
+          return
+        }
+        // `done` and `error` close a stream. A stream that simply stops without
+        // one must not leave a half suggestion on screen.
+        if (event === 'done' || event === 'error') terminal = true
+        handlers[event]?.(data)
+      }
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          let cut = buffer.indexOf('\n\n')
+          while (cut >= 0) {
+            dispatch(buffer.slice(0, cut))
+            buffer = buffer.slice(cut + 2)
+            cut = buffer.indexOf('\n\n')
+          }
+        }
+        if (buffer.trim() !== '') dispatch(buffer)
+        if (!terminal) {
+          if (typeof handlers.error === 'function') handlers.error({ message: 'stream ended without a result' })
+        }
+      } finally {
+        try { await reader.cancel() } catch { /* already closed */ }
+      }
+    }
+
+    /** The usage ledger for the settings panel (no model call). */
+    async function fetchUsage(sessionId, signal) {
+      const body = await callRoute('/composer-quill/usage', { sessionId }, signal)
+      return body !== null && typeof body === 'object' ? body : null
+    }
+
+    /** Which providers and models this installation can reach (no model call). */
+    async function fetchModels(signal) {
+      const body = await callRoute('/composer-quill/models', {}, signal)
+      const providers = Array.isArray(body?.providers) ? body.providers : []
+      return providers
+        .filter((provider) => typeof provider?.id === 'string' && Array.isArray(provider.models))
+        .map((provider) => ({
+          id: provider.id,
+          name: typeof provider.name === 'string' ? provider.name : provider.id,
+          models: provider.models.filter((model) => typeof model?.id === 'string'),
+        }))
+    }
+
+    /** Zero the lifetime totals. */
+    async function resetUsageTotals(signal) {
+      const body = await callRoute('/composer-quill/usage', { reset: true }, signal)
+      return body !== null && typeof body === 'object' ? body : null
+    }
+
+    /** The user's own past messages for this Session (no model call). */
+    async function fetchHistory(sessionId, signal) {
+      const body = await callRoute('/composer-quill/history', { sessionId }, signal)
+      return Array.isArray(body?.items) ? body.items : []
+    }
+
+    async function callRoute(path, payload, signal) {
+      const headers = requestHeaders()
+      const response = await fetch(path, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ ...payload, model: currentConfig().modelRoute, reasoning: currentConfig().reasoning, locale: browserLocale(), language: payload.draft === '' ? currentConfig().language : 'auto' }),
+        signal,
+        credentials: 'same-origin',
+      })
+      if (!response.ok) {
+        let message = `request failed (HTTP ${response.status})`
+        try {
+          const body = await response.json()
+          if (typeof body?.error?.message === 'string' && body.error.message !== '') message = body.error.message
+        } catch {
+          // Non-JSON body: keep the status message.
+        }
+        throw Object.assign(new Error(message), { status: response.status })
+      }
+      return await response.json()
+    }

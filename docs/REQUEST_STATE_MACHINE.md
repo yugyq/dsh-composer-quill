@@ -2,7 +2,9 @@
 
 > **状态：已实施（0.31.33）。** `request()` 先问 `gateFor()`，再按返回的 `effects` 执行；顺序写法的闸门链已删除。
 >
-> 适用版本：0.31.66 ｜ `gateFor()` 与 `request()` 在同一文件，紧邻彼此
+> 适用版本：0.32.0 ｜ `gateFor()` 与 `request()` 相邻（`client/hooks.js`）
+>
+> **行号说明**：下表「现状行」是 0.31.65 单文件 `client.js` 的行号。0.32.0 起 `client.js` 由 `client/` 八个源文件拼接生成（开头多 8 行分隔注释），行号整体后移；按函数名（`gateFor` / `request`）在 `client/hooks.js` 里查找更稳。
 
 ## 1. 为什么是「闸门表」而不是「状态机」
 
