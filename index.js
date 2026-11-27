@@ -187,6 +187,10 @@ const COMPOSE_RULES = [
   // concrete value whenever the draft referred to it vaguely ("那串订单号我记不清了").
   'The message may carry attachments. What the attachment note says you can see, you can see: use it as fact about this message, never claim it is unavailable.',
   'When the draft points at an attachment (a screenshot, a picture, a file just mentioned), continue with the concrete values visible in it, copied exactly as they appear — never rounded, re-spelled or guessed.',
+  // Measured on a 120-line log whose id sits past the excerpt: four of four drafts
+  // guessed a warehouse code rather than say the rest was cut off. A stronger note
+  // alone still guessed two; the note plus this line guessed none.
+  'A quoted file excerpt is the beginning of a file, not the whole thing. When the note says the excerpt stops before the file ends, everything past that point is unknown to you: never guess a value that may be there, ask the user for it.',
 ].join('\n')
 
 /** Append one JSONL diagnostic line next to the profile. Best-effort only. */
@@ -1226,9 +1230,9 @@ async function attachmentContent(ctx, sessionId, attachments) {
       const excerpt = await readFileExcerpt(store, ref)
       const label = `The user attached a file "${ref?.name ?? item.name}" (${formatBytes(ref?.bytes ?? item.bytes)}).`
       if (excerpt === null) {
-        lines.push(`${label} Only its name and size are available; do not describe its contents.`)
+        lines.push(`${label} Only its name and size are available; you do not have its contents at all — ask the user for them instead of guessing.`)
       } else {
-        const more = excerpt.truncated ? '\n(the excerpt stops here; the file is longer)' : ''
+        const more = excerpt.truncated ? '\n(the excerpt stops here; the rest of the file is unknown to you — never guess a value that may appear there, ask the user for it)' : ''
         lines.push(`${label} Beginning of its text:\n"""\n${excerpt.text}\n"""${more}`)
       }
       continue

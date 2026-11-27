@@ -14,7 +14,7 @@ process.env.DSH_COMPOSER_QUILL_NO_CACHE = '1'
 process.env.DSH_COMPOSER_QUILL_STATE_DIR = mkdtempSync(join(tmpdir(), 'quill-state-'))
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { homedir, tmpdir as tmpdirOf } from 'node:os'
 import { tmpdir } from 'node:os'
@@ -3673,6 +3673,28 @@ group('host: attachments')
     assert.ok(read.note.includes('notes.txt'), 'the file is named')
     assert.ok(read.note.includes('409 是会话过期'), 'the beginning of its text is quoted')
     assert.equal(read.note.includes('do not describe'), false, 'a file it can read is not hedged')
+  })
+
+  await checkAsync('a file longer than its excerpt says the rest is unknown', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'quill-long-'))
+    const file = join(dir, 'build.log')
+    const filler = Array.from({ length: 200 }, (_, i) => `2026-11-27T09:00:00Z INFO step ${i} finished`).join('\n')
+    writeFileSync(file, `${filler}\n仓编号：KX-7731\n`)
+    const ref = { attachmentId: 'a3', name: 'build.log', bytes: statSync(file).size }
+    const ctx = {
+      get: (name) => (name === 'attachments'
+        ? { fileHostPath: () => file }
+        : name === 'fileUploads'
+          ? { resolve: () => ({ type: 'file', attachment: ref }) }
+          : null),
+      agents: { get: () => ({ session: { id: 's-a' } }) },
+    }
+    const read = await attachmentContent(ctx, 's-a', [{ kind: 'file', name: 'build.log', bytes: ref.bytes, receiptId: 'r' }])
+    // The draft may ask for a value that sits past the cut: the note has to say so, or
+    // the model fills the gap with a plausible-looking code instead of asking.
+    assert.ok(read.note.includes('the excerpt stops here'), 'the cut is named')
+    assert.ok(read.note.includes('unknown to you'), 'and what is past it is called unknown')
+    assert.ok(read.note.includes('ask the user for it'), 'with the thing to do instead')
   })
 
   await checkAsync('an attachment the Host does not hold is said to be invisible', async () => {
