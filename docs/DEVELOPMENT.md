@@ -1,6 +1,6 @@
 # 开发与验证
 
-> 适用版本：0.32.0 ｜ 宿主是手写 ESM，没有构建；浏览器端源码在 `client/`，由 `npm run build:client` 拼成 `client.js`
+> 适用版本：0.32.1 ｜ 宿主是手写 ESM，没有构建；浏览器端源码在 `client/`，由 `npm run build:client` 拼成 `client.js`
 
 
 ## 1. 目录结构
@@ -234,6 +234,8 @@ DSH_SCENARIO_LIMIT=14 python dev/verify/verify_daily.py
 | `suppressed`（客户端上报） | 连续忽略后压住了一条整段改写 |
 | `cache-restored` | 启动时从磁盘恢复了多少条缓存 |
 | `cache-...` / `client-row` | 缓存与客户端包探测 |
+
+**探针会话单独成文**：`sessionId` 以 `probe-` 开头的请求，事件写进同目录的 `composer-quill-probe.log`，并且不进用量账本（改为记一条 `probe-usage`）。原因很实在——一次压测在真实日志里留下 1697 条事件，把一整天真实输入的分布整个盖掉，事后又分不出谁是谁。所以自己写探针脚本时，把会话名起成 `probe-<用途>`，账本和日志两处就自动隔离；`dev/probes/` 里三个跑宿主代码的脚本还额外把 `DSH_COMPOSER_QUILL_STATE_DIR` 指向临时目录，连文件都不落。
 
 浏览器事件（经 `/beacon` 落到同一文件）：`dock`（挂载时的 props 概况）、`dock-state`（每次判定变化，含 `phase/kind/items/nextActive/pendingCompose/pendingNext/draftEmpty/running`）、`paint`、`hydrated`、`reused`/`dedupe`/`covered`、`not-live`、`render-error`。
 

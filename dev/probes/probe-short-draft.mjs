@@ -3,6 +3,15 @@
  * The gate is `length >= 4 && await composeShortDraft(...)`, so a shorter draft skips
  * the short path entirely and falls into the heavy main compose.
  */
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+// A scripted run must never append to the log the user's own traffic is read from:
+// pin a throwaway state directory before index.js is imported, because the plugin
+// resolves that directory once, at load time.
+process.env.DSH_COMPOSER_QUILL_STATE_DIR ??= mkdtempSync(join(tmpdir(), 'quill-probe-'))
+
 const { __test } = await import('../../index.js')
 const { produceCompose } = __test
 
@@ -42,7 +51,7 @@ const run = async (label, replies, draft, events = longEvents) => {
   const { ctx, calls } = fakeCtx(replies)
   const sent = []
   await produceCompose(ctx, {
-    sessionId: 's-probe',
+    sessionId: 'probe-short-draft',
     draft,
     key: `probe-long-${label}-${draft.length}`,
     events,

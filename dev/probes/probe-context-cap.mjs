@@ -3,6 +3,15 @@
  * prompt size under the current budget. Run twice — once plain, once with
  * DSH_QUILL_CONTEXT=full — to compare the caps.
  */
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+// A scripted run must never append to the log the user's own traffic is read from:
+// pin a throwaway state directory before index.js is imported, because the plugin
+// resolves that directory once, at load time.
+process.env.DSH_COMPOSER_QUILL_STATE_DIR ??= mkdtempSync(join(tmpdir(), 'quill-probe-'))
+
 const { __test } = await import('../../index.js')
 const { produceCompose } = __test
 
@@ -49,7 +58,7 @@ for (const turns of [2, 6, 12, 24, 40]) {
   const chars = events.reduce((sum, e) => sum + e.data.content[0].text.length, 0)
   const { ctx, calls } = fakeCtx()
   await produceCompose(ctx, {
-    sessionId: 's-cap',
+    sessionId: 'probe-context-cap',
     draft: '帮我看下这个报错',
     key: `cap-${mode}-${turns}`,
     events,

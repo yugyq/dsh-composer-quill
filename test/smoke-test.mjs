@@ -3083,7 +3083,7 @@ group('host: budget')
 group('host: stream telemetry')
 
 {
-  const { composeStream } = host.__test
+  const { composeStream, noteUsage, usageSnapshot, resetUsage } = host.__test
 
   // A response object with just what an SSE write needs.
   const mkRes = () => {
@@ -3100,9 +3100,9 @@ group('host: stream telemetry')
     return res
   }
 
-  const mkCtx = (produce) => {
+  const mkCtx = (produce, id = 's-trace') => {
     const session = {
-      id: 's-trace',
+      id,
       requestHeader: () => ({ config: { provider: 'p', model: 'trace-model' } }),
       snapshotEvents: () => [],
     }
@@ -3118,8 +3118,8 @@ group('host: stream telemetry')
   }
 
   /** trace() appends without awaiting: poll instead of assuming the line landed. */
-  const readTrace = async (dir, event) => {
-    const file = join(dir, 'composer-quill.log')
+  const readTrace = async (dir, event, name = 'composer-quill.log') => {
+    const file = join(dir, name)
     for (let attempt = 0; attempt < 80; attempt += 1) {
       const rows = (existsSync(file) ? readFileSync(file, 'utf8').split('\n') : [])
         .filter(Boolean)
@@ -3404,6 +3404,49 @@ group('host: stream telemetry')
       assert.equal(ends[0].delivered, true)
       assert.equal(ends[0].status, 'painted', 'a delivered one-shot answer is not silent')
       assert.ok(ends[0].paintedChars > 0)
+    })
+  })
+
+  await checkAsync('a probe session writes to its own log, never to the one the user reads', async () => {
+    await withTempState(async (dir) => {
+      await composeStream(
+        mkCtx(function* () {
+          yield { type: 'text-delta', text: '，顺便说下是哪个接口超时。' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        }, 'probe-trace-1'),
+        { sessionId: 'probe-trace-1', draft: '帮我把这段日志按行号排一下', receivedAt: Date.now() - 5 },
+        mkRes(),
+        new AbortController().signal,
+      )
+
+      const probe = await readTrace(dir, 'stream-end', 'composer-quill-probe.log')
+      assert.equal(probe.length, 1, 'the measurement is still written down')
+      assert.equal(probe[0].sessionId, 'probe-trace-1')
+
+      // One afternoon of load testing outweighed a whole day of real typing in this
+      // file, and afterwards nothing could separate the two. A line here means the
+      // separation leaked.
+      const userFile = join(dir, 'composer-quill.log')
+      const user = existsSync(userFile) ? readFileSync(userFile, 'utf8') : ''
+      assert.equal(user.includes('probe-trace-1'), false, 'the user log stays about the user')
+    })
+  })
+
+  await checkAsync('a probe session pays its bill but stays out of the usage the panel shows', async () => {
+    await withTempState(async (dir) => {
+      resetUsage()
+      noteUsage({
+        mode: 'compose',
+        model: 'deepseek-flash',
+        usage: { inputTokens: 900, outputTokens: 40, cacheReadTokens: 0, reasoningTokens: 0 },
+        sessionId: 'probe-bill-1',
+      })
+      assert.equal(usageSnapshot().lifetime.calls, 0, 'load testing is not the user typing')
+
+      const rows = await readTrace(dir, 'probe-usage', 'composer-quill-probe.log')
+      assert.equal(rows.length, 1, 'the tokens are still accounted for somewhere')
+      assert.equal(rows[0].usage.inputTokens, 900)
+      assert.equal(rows[0].model, 'deepseek-flash')
     })
   })
 }

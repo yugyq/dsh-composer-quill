@@ -239,10 +239,22 @@ function rotateLog(file) {
   }
 }
 
+/** Sessions whose id starts with this are measurements, not the user typing. */
+const PROBE_SESSION_PREFIX = 'probe-'
+
+/** True when a session was opened by a probe script to measure the model. */
+function isProbeSession(sessionId) {
+  return typeof sessionId === 'string' && sessionId.startsWith(PROBE_SESSION_PREFIX)
+}
+
 function trace(event, data) {
   try {
     const line = `${JSON.stringify({ at: new Date().toISOString(), event, ...data })}\n`
-    const file = join(stateDirectory(), 'composer-quill.log')
+    // A probe's lines go to their own file. Mixed into the user's log they made every
+    // real distribution unusable: one afternoon of load testing outweighed a day of
+    // actual typing, and there was no way to tell the two apart afterwards.
+    const name = isProbeSession(data?.sessionId) ? 'composer-quill-probe.log' : 'composer-quill.log'
+    const file = join(stateDirectory(), name)
     traceCount += 1
     // Checking the size on every line would be a syscall per request.
     if (traceCount % 200 === 0) rotateLog(file)
@@ -1397,6 +1409,13 @@ function pruneDays(data, at) {
 /** Record one call. Never throws: a broken ledger must not break a suggestion. */
 function noteUsage({ mode, model, usage, sessionId, at } = {}) {
   try {
+    // Probe traffic costs real money, but it is not the user's usage. Keeping it out
+    // of the ledger is what lets "calls today" stay a sentence about the user; the
+    // numbers are still written down, in the probe log, where they can be added up.
+    if (isProbeSession(sessionId)) {
+      trace('probe-usage', { sessionId, mode, model: model ?? null, usage: usage ?? null, at: at ?? Date.now() })
+      return
+    }
     const data = usageLedger.data
     // at is the moment the request started, not the moment it finished: the provider
     // bills by when the call happened, and a call can cross the peak boundary.
@@ -2934,7 +2953,7 @@ function cacheEntries() {
   }))
 }
 
-export const __test = { handleModels, produceCompose, composeStream, predict, cacheEntries, ledgerCandidates, stateDirectory, stateDirectory, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, sentencePrompt, composePlan, resetEffortRefusals, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, trimEcho, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
+export const __test = { handleModels, produceCompose, composeStream, predict, cacheEntries, ledgerCandidates, stateDirectory, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, PROBE_SESSION_PREFIX, isProbeSession, buildShortDraftPrompt, sentencePrompt, composePlan, resetEffortRefusals, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, trimEcho, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
 
 
 

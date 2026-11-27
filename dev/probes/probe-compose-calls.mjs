@@ -5,6 +5,15 @@
  */
 import fs from 'node:fs'
 
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+// A scripted run must never append to the log the user's own traffic is read from:
+// pin a throwaway state directory before index.js is imported, because the plugin
+// resolves that directory once, at load time.
+process.env.DSH_COMPOSER_QUILL_STATE_DIR ??= mkdtempSync(join(tmpdir(), 'quill-probe-'))
+
 const { __test } = await import('../../index.js')
 const { produceCompose } = __test
 if (typeof produceCompose !== 'function') {
@@ -17,7 +26,7 @@ const events = [
   { type: 'assistant/message', data: { content: [{ type: 'text', text: '是连接超时，重试一次通常就好。' }] } },
 ]
 
-const session = { requestHeader: () => null, id: 's-probe' }
+const session = { requestHeader: () => null, id: 'probe-compose-calls' }
 
 /** One scripted reply per call. */
 function fakeCtx(replies) {
