@@ -235,6 +235,8 @@ DSH_SCENARIO_LIMIT=14 python dev/verify/verify_daily.py
 | `cache-restored` | 启动时从磁盘恢复了多少条缓存 |
 | `cache-...` / `client-row` | 缓存与客户端包探测 |
 
+**附件探针（要花真钱，不进 CI）**：`dev/probes/probe-attachments-live.mjs` 走插件自己的 `composeStream`，把真实图片与文件存进真实附件库，再打到真实模型上。它证明的是单测证明不了的那半步——图片块真的到了模型眼前：同一句草稿「这个截图里的数字是」，带图时补出 `7342`，不带图时只能写出「具体数值」；文件里的仓编号 `KX-7731` 只在带着文件时出现，不带文件时模型会编一个 `C-2024-0871`；读不出正文的二进制文件，模型会回「只能看到附件名称和大小」而不是编内容。跑法：`node dev/probes/probe-attachments-live.mjs`（需要 `~/.dsh/.credentials.yaml` 里的 `sk-…`，DSH 包不在默认位置时用 `DSH_PACKAGES` 指路）。
+
 **探针会话单独成文**：`sessionId` 以 `probe-` 开头的请求，事件写进同目录的 `composer-quill-probe.log`，并且不进用量账本（改为记一条 `probe-usage`）。原因很实在——一次压测在真实日志里留下 1697 条事件，把一整天真实输入的分布整个盖掉，事后又分不出谁是谁。所以自己写探针脚本时，把会话名起成 `probe-<用途>`，账本和日志两处就自动隔离；`dev/probes/` 里三个跑宿主代码的脚本还额外把 `DSH_COMPOSER_QUILL_STATE_DIR` 指向临时目录，连文件都不落。
 
 浏览器事件（经 `/beacon` 落到同一文件）：`dock`（挂载时的 props 概况）、`dock-state`（每次判定变化，含 `phase/kind/items/nextActive/pendingCompose/pendingNext/draftEmpty/running`）、`paint`、`hydrated`、`reused`/`dedupe`/`covered`、`not-live`、`render-error`。

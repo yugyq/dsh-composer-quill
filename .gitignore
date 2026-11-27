@@ -45,3 +45,4 @@ dev/ab-prompt-last.json
 !docs/assets/*.png
 !assets/
 !assets/*.png
+!dev/probes/attachments-shot.png
