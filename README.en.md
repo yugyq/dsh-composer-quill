@@ -114,7 +114,7 @@ Details in [Architecture](docs/ARCHITECTURE.md) and [Protocol](docs/PROTOCOL.md)
 
 ## Tests
 
-186 unit checks and 67 browser scenarios, both in CI. The scenarios cover the real rhythms: fast typing, pausing for a suggestion, cancelling, switching Sessions, long-text layout.
+187 unit checks and 67 browser scenarios, both in CI. The scenarios cover the real rhythms: fast typing, pausing for a suggestion, cancelling, switching Sessions, long-text layout.
 ```bash
 npm test                          # 156 offline unit checks (including client.js freshness)
 npm run test:ui                   # 64 browser scenarios (bundled simulator)

@@ -188,8 +188,28 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.manualHint': 'Trigger manually: Ctrl+Shift+Space',
     }
 
+    /**
+     * The page token is injected into the document the Host serves. A reload asks
+     * for that document again, and the injected table is not always rebuilt, so the
+     * value seen on the first load is kept for the rest of the tab's life: without it
+     * every beacon after a reload is rejected and the plugin goes blind.
+     */
     function token() {
-      return typeof window[TOKEN_GLOBAL] === 'string' ? window[TOKEN_GLOBAL] : ''
+      const injected = typeof window[TOKEN_GLOBAL] === 'string' ? window[TOKEN_GLOBAL] : ''
+      if (injected !== '') {
+        try {
+          window.sessionStorage.setItem(TOKEN_GLOBAL, injected)
+        } catch {
+          // Storage can be disabled; the injected value is enough for this load.
+        }
+        return injected
+      }
+      try {
+        const kept = window.sessionStorage.getItem(TOKEN_GLOBAL)
+        return typeof kept === 'string' ? kept : ''
+      } catch {
+        return ''
+      }
     }
 
     /** Fire-and-forget stage report; needs no page token. */
@@ -3836,6 +3856,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, token, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

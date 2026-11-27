@@ -1349,6 +1349,28 @@ check('the previous Session next-message candidates are not shown in this one', 
   assert.equal(nextVisible(live({ nextEnabled: false })), false, 'switched off')
 })
 
+check('the page token outlives a reload', () => {
+  const { token } = moduleExports.__test
+  const saved = globalThis.window.__DSH_COMPOSER_QUILL_TOKEN__
+  const kept = new Map()
+  globalThis.window.sessionStorage = {
+    getItem: (key) => (kept.has(key) ? kept.get(key) : null),
+    setItem: (key, value) => { kept.set(key, String(value)) },
+    removeItem: (key) => { kept.delete(key) },
+  }
+  try {
+    globalThis.window.__DSH_COMPOSER_QUILL_TOKEN__ = 'reload-token'
+    assert.equal(token(), 'reload-token', 'the injected value is used while the document has it')
+    delete globalThis.window.__DSH_COMPOSER_QUILL_TOKEN__
+    assert.equal(token(), 'reload-token', 'and the tab keeps reporting after the document is served again')
+    globalThis.window.sessionStorage = undefined
+    assert.equal(token(), '', 'a tab that never saw a token still sends none')
+  } finally {
+    globalThis.window.__DSH_COMPOSER_QUILL_TOKEN__ = saved
+    delete globalThis.window.sessionStorage
+  }
+})
+
 check('a draft and its attachments make one signature', () => {
   const { requestSignature, signatureAttachmentKey } = moduleExports.__test
   assert.equal(signatureAttachmentKey(requestSignature('你好', 'image:r1:1')), 'image:r1:1')
