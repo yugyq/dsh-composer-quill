@@ -1,6 +1,6 @@
 {
   "name": "dsh-composer-quill",
-  "version": "0.33.0",
+  "version": "0.33.1",
   "type": "module",
   "description": "在 DSH 的输入框里提前把话写好：回合结束后给出下一句，打字时补完后半句，顺手修掉错字和标点。",
   "license": "MIT",
