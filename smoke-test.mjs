@@ -213,6 +213,24 @@ check('parseComposeReply splits Case A tails from Case B rewrites', () => {
   assert.equal(parseComposeReply('', '帮我看下这个报错'), null)
 })
 
+check('a tail that restates the last word of the draft is trimmed, not doubled', () => {
+  const { parseComposeReply, trimEcho } = host.__test
+  // The model continues from the last word it saw, which sometimes means
+  // writing that word again: "…三个字段需要" + "需要跟…" reads "需要需要".
+  assert.equal(trimEcho('这个接口的返回里有三个字段需要', '需要跟后端确认一下'), '跟后端确认一下')
+  assert.equal(trimEcho('把刚才那个脚本改成并发', '改成并发后记得隔离目录。'), '后记得隔离目录。')
+  // One character is usually a real continuation ("降到" + "到最低"), not an echo.
+  assert.equal(trimEcho('如果超时就把强度降到', '到最低再跑一遍'), '到最低再跑一遍')
+  // Nothing in common: untouched.
+  assert.equal(trimEcho('我看下日志里有没有', '报错堆栈'), '报错堆栈')
+  const parsed = parseComposeReply('需要跟后端确认一下', '这个接口的返回里有三个字段需要')
+  assert.equal(parsed.mode, 'append')
+  assert.equal(parsed.tail, '跟后端确认一下')
+  assert.equal(parsed.text, '这个接口的返回里有三个字段需要跟后端确认一下。')
+  // A reply that is nothing but the echo leaves no suggestion at all.
+  assert.equal(parseComposeReply('需要', '这个接口的返回里有三个字段需要'), null)
+})
+
 // ------------------------------------------------- Host route, fake model
 group('host: routes and streaming')
 
@@ -2952,6 +2970,29 @@ group('host: stream telemetry')
       assert.equal(routes[0].mode, 'compose')
       assert.equal(routes[0].sessionId, 's-trace', 'route-effective names its session')
     })
+  })
+
+  await checkAsync('a reply that restates the last word of the draft is cut before it is sent', async () => {
+    // Measured on 48 real calls: 5 tails opened by repeating the draft's last word,
+    // which reads as "…那条那条，找出报错的那几行。" once inserted. The host trims it.
+    const res = mkRes()
+    await composeStream(
+      mkCtx(function* () {
+        yield { type: 'text-delta', text: '那条，找出报错的那几行。' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }),
+      // A draft no other case uses: the memory cache is module-wide.
+      { sessionId: 's-trace', draft: '先看下 auth.test.ts 那条' },
+      res,
+      new AbortController().signal,
+    )
+    const finals = res.frames()
+      .split('\n\n')
+      .filter((frame) => frame.startsWith('event: final'))
+      .map((frame) => JSON.parse(frame.split('\ndata: ')[1]))
+    assert.equal(finals.length, 1)
+    assert.equal(finals[0].text, '先看下 auth.test.ts 那条，找出报错的那几行。')
+    assert.equal(res.frames().includes('那条那条'), false, 'the echo never reaches the browser')
   })
 
   await checkAsync('a stream the browser abandons is recorded as cancelled', async () => {

@@ -64,6 +64,14 @@ const HISTORY_ITEM_MAX_CHARS = 600
 const RESTATE_PREFIX_MIN_CHARS = 4
 /** Below this many characters a "tail" is guesswork: ask for a full message. */
 const MIN_TAIL_DRAFT_CHARS = 4
+/**
+ * A model asked to continue a sentence sometimes starts by restating the last
+ * word of it: draft "…三个字段需要" + tail "需要跟后端确认" reads as "需要需要".
+ * Two characters is the shortest echo worth removing (one character is usually a
+ * real continuation: "降到" + "到最低"); eight is past any plausible echo.
+ */
+const ECHO_MIN_CHARS = 2
+const ECHO_MAX_CHARS = 8
 const MAX_NORMALIZED_CHARS = 8000
 /**
  * Response budget for one call. 500 measured too tight: with a reasoning model
@@ -803,6 +811,25 @@ function parseList(reply, key, limit, max, skipToken) {
 }
 
 /** Split a compose reply into its case: appended tail, or a full rewrite. */
+/**
+ * Drop the part of a tail that only repeats the end of the draft.
+ *
+ * The model continues from the last word it saw, which sometimes means writing
+ * that word again: `…三个字段需要` + `需要跟后端确认` would be inserted as
+ * `…需要需要跟后端确认`. `followRemainder` on the client only handles a reply
+ * that restates the whole draft, so a partial echo has to be cut here, before
+ * the tail is joined and cached.
+ */
+function trimEcho(draft, tail) {
+  const a = Array.from((draft ?? '').trim())
+  const b = Array.from(tail ?? '')
+  const most = Math.min(ECHO_MAX_CHARS, a.length, b.length)
+  for (let n = most; n >= ECHO_MIN_CHARS; n -= 1) {
+    if (a.slice(-n).join('') === b.slice(0, n).join('')) return b.slice(n).join('')
+  }
+  return tail ?? ''
+}
+
 function parseComposeReply(reply, draft, options = {}) {
   const allowTail = options.allowTail !== false
   const minTail = Number(options.minTail ?? 0)
@@ -838,7 +865,7 @@ function parseComposeReply(reply, draft, options = {}) {
     if (composed === null) return null
     return { mode: 'full', text: composed }
   }
-  const tail = text.trim()
+  const tail = trimEcho(draft, text.trim())
   if (tail === '') return null
   if (looksLikeMeta(tail)) return null
   // "？" or "……" alone is not a completion: let the sentence fallback try.
@@ -2769,7 +2796,7 @@ function cacheEntries() {
   }))
 }
 
-export const __test = { handleModels, produceCompose, composeStream, predict, cacheEntries, ledgerCandidates, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
+export const __test = { handleModels, produceCompose, composeStream, predict, cacheEntries, ledgerCandidates, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, trimEcho, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
 
 
 
