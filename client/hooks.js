@@ -476,7 +476,7 @@
             if (buffer !== '') {
               const text = buffer
               buffer = ''
-              ghost.streamDelta(text)
+              ghost.streamDelta(text, live.sessionId)
             }
           }
           const queue = (text) => {
@@ -490,7 +490,7 @@
             if (idle !== null) clearTimeout(idle)
             idle = setTimeout(() => {
               active.abort()
-              ghost.streamFail('timed out')
+              ghost.streamFail('timed out', live.sessionId)
             }, live.timeoutMs || CLIENT_TIMEOUT_MS)
           }
           bump()
@@ -503,7 +503,7 @@
             retract: (data) => {
               bump()
               flush()
-              ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full')
+              ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full', live.sessionId)
             },
             delta: (data) => {
               bump()
@@ -512,13 +512,13 @@
             final: (data) => {
               bump()
               flush()
-              if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode)
+              if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode, live.sessionId)
               if (ghost.takeSuppressed?.() === true) report('suppressed', { sessionId: live.sessionId, detail: 'rewrite' })
             },
             done: (data) => {
               flush()
               markLive()
-              ghost.streamDone(data ?? {})
+              ghost.streamDone(data ?? {}, live.sessionId)
               // Most compose suggestions arrive over SSE: persist them too, or
               // only the JSON fallback would ever be reused.
               const settled = ghost.getSnapshot()
@@ -528,7 +528,7 @@
             },
             error: (data) => {
               const message = typeof data?.message === 'string' ? data.message : 'stream failed'
-              ghost.streamFail(message)
+              ghost.streamFail(message, live.sessionId)
               report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
             },
             json: (body) => {
@@ -546,7 +546,7 @@
               return
             }
             const message = error instanceof Error ? error.message : String(error)
-            ghost.streamFail(message)
+            ghost.streamFail(message, live.sessionId)
             report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
           }).finally(() => {
             if (idle !== null) clearTimeout(idle)

@@ -1362,6 +1362,32 @@ check('hydrate shows a stored suggestion without a request', () => {
   assert.equal(second, false)
 })
 
+check('a frame left over from another session cannot join the new one', () => {
+  const ghost = moduleExports.__test.createGhostStore()
+  // A 的流正在路上
+  ghost.streamStart('s-old', 'compose', '把这段报错')
+  ghost.streamModeSet('append')
+  ghost.streamDelta('，找出报错的那几行', 's-old')
+  assert.deepEqual(ghost.getSnapshot().items, ['把这段报错，找出报错的那几行'])
+
+  // 用户切到新会话，新会话自己发了一次请求：store 从此属于 s-new
+  ghost.streamStart('s-new', 'compose', '把这段日志')
+  assert.equal(ghost.getSnapshot().sessionId, 's-new')
+
+  // A 的后续帧这时才到：它们属于 s-old，不许被写进 s-new 的快照
+  ghost.streamDelta('，按时间顺序排', 's-old')
+  const afterDelta = ghost.getSnapshot()
+  assert.equal(afterDelta.sessionId, 's-new', 'a late frame must not relabel the snapshot')
+  assert.deepEqual(afterDelta.items, [], 'a late frame must not become the new session suggestion')
+
+  ghost.streamFinal('，按时间顺序排一下', 'append', 's-old')
+  assert.deepEqual(ghost.getSnapshot().items, [], 'the late final frame is dropped too')
+  ghost.streamFail('boom', 's-old')
+  assert.equal(ghost.getSnapshot().phase, 'loading', 'and a late failure does not become this session error')
+  ghost.streamDone({ reason: 'unchanged' }, 's-old')
+  assert.equal(ghost.getSnapshot().phase, 'loading')
+})
+
 check('a run of ignored suggestions withholds rewrites, not tails', () => {
   const ghost = moduleExports.__test.createGhostStore()
   ghost.setSuppressRewrites(true)

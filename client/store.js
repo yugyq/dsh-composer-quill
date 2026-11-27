@@ -238,6 +238,15 @@
       // The draft this stream was requested for. A retained proposal may belong
       // to an older draft, so the base must come from the request, not the store.
       let streamBase = ''
+      // Which Session opened this stream. A frame that arrives after the user moved to
+      // another Session belongs to the one that asked for it — writing it into the
+      // current snapshot turns the previous Session's answer into this one's.
+      let streamSession = null
+      // A late frame is dropped, not applied to whoever is on screen now.
+      const late = () => streamSession !== null && store.getSnapshot().sessionId !== streamSession
+  // Every frame carries the session it was requested for. A stream outlives a
+  // session switch; without this the frames of the old one land in the new one.
+  const belongs = (fromSession) => fromSession === undefined || store.getSnapshot().sessionId === fromSession
       const cancel = () => {
         if (controller !== null) {
           controller.abort()
@@ -293,6 +302,9 @@
         streamStart: (sessionId, kind, forDraft) => {
           cancel()
           streaming = true
+          // Identity of the request, not of the snapshot. A stream outlives a session
+          // switch, and every frame below must be able to tell whose answer it is.
+          streamSession = sessionId
           controller = new AbortController()
           acc = ''
           streamMode = 'full'
@@ -327,26 +339,34 @@
           // that follow paint as usual.
           if (mode === 'append') holding = false
         },
-        streamRetract: (mode) => {
+        streamRetract: (mode, fromSession) => {
+          if (!belongs(fromSession) || late()) return
           acc = ''
           streamMode = mode === 'append' ? 'append' : 'full'
           if (streamMode === 'append') holding = false
           const current = store.getSnapshot()
           store.set({ ...current, items: [] })
         },
-        streamDelta: (text) => {
+        streamDelta: (text, fromSession) => {
           if (typeof text !== 'string' || text === '') return
+          if (!belongs(fromSession) || late()) return
           acc += text
           // Withheld: keep the scratch text, leave the composer alone.
           if (holding) return
           const current = store.getSnapshot()
           // The store may still carry the proposal of an older draft (retention):
           // this result belongs to the draft the stream was requested for.
-          store.set({ ...current, phase: 'ready', items: [proposalOf()], forDraft: current.requested ?? current.forDraft })
+          store.set({
+            sessionId: streamSession,
+            ...current,
+            phase: 'ready',
+            items: [proposalOf()],
+            forDraft: current.requested ?? current.forDraft,
+          })
         },
-        streamFinal: (text, mode) => {
+        streamFinal: (text, mode, fromSession) => {
+          if (!belongs(fromSession) || late()) return
           streaming = false
-
           const current = store.getSnapshot()
           if (mode === 'append' || mode === 'full') streamMode = mode
           if (holding && streamMode === 'full') {
@@ -355,7 +375,7 @@
             holding = false
             lastSuppressed = true
             acc = ''
-            store.set({ ...current, phase: 'empty', items: [], requested: null, forDraft: current.requested ?? current.forDraft })
+            store.set({ sessionId: streamSession, ...current, phase: 'empty', items: [], requested: null, forDraft: current.requested ?? current.forDraft })
             return
           }
           holding = false
@@ -367,9 +387,10 @@
               ? text.slice(base.length)
               : text
           }
-          store.set({ ...current, phase: 'ready', items: [proposalOf()], forDraft: current.requested ?? current.forDraft })
+          store.set({ sessionId: streamSession, ...current, phase: 'ready', items: [proposalOf()], forDraft: current.requested ?? current.forDraft })
         },
-        streamDone: (meta) => {
+        streamDone: (meta, fromSession) => {
+          if (!belongs(fromSession) || late()) return
           streaming = false
           controller = null
           const current = store.getSnapshot()
@@ -379,6 +400,7 @@
           // once, it failed, and a quiet empty answer must not erase that fact.
           if (unchanged && current.phase === 'error') return
           store.set({
+            sessionId: streamSession,
             ...current,
             phase: unchanged || items.length === 0 ? 'empty' : 'ready',
             // The Host said "nothing to change" for this draft: keeping the older
@@ -389,13 +411,14 @@
             forDraft: current.requested ?? current.forDraft,
           })
         },
-        streamFail: (message) => {
+        streamFail: (message, fromSession) => {
+          if (!belongs(fromSession) || late()) return
           streaming = false
           controller = null
           const current = store.getSnapshot()
           // Keep the retry budget pointed at the right draft: forDraft must follow
           // this request, or the one-retry-per-draft guard never matches.
-          store.set({ ...current, phase: 'error', items: [], error: message, requested: null, forDraft: current.requested ?? current.forDraft })
+          store.set({ sessionId: streamSession, ...current, phase: 'error', items: [], error: message, requested: null, forDraft: current.requested ?? current.forDraft })
         },
         clear: (sessionId) => {
           const current = store.getSnapshot()

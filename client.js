@@ -27,7 +27,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.33.1'
+    const BUILD = '0.33.2'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -717,6 +717,15 @@ const COVERED_DEBOUNCE_MS = 1200
       // The draft this stream was requested for. A retained proposal may belong
       // to an older draft, so the base must come from the request, not the store.
       let streamBase = ''
+      // Which Session opened this stream. A frame that arrives after the user moved to
+      // another Session belongs to the one that asked for it — writing it into the
+      // current snapshot turns the previous Session's answer into this one's.
+      let streamSession = null
+      // A late frame is dropped, not applied to whoever is on screen now.
+      const late = () => streamSession !== null && store.getSnapshot().sessionId !== streamSession
+  // Every frame carries the session it was requested for. A stream outlives a
+  // session switch; without this the frames of the old one land in the new one.
+  const belongs = (fromSession) => fromSession === undefined || store.getSnapshot().sessionId === fromSession
       const cancel = () => {
         if (controller !== null) {
           controller.abort()
@@ -772,6 +781,9 @@ const COVERED_DEBOUNCE_MS = 1200
         streamStart: (sessionId, kind, forDraft) => {
           cancel()
           streaming = true
+          // Identity of the request, not of the snapshot. A stream outlives a session
+          // switch, and every frame below must be able to tell whose answer it is.
+          streamSession = sessionId
           controller = new AbortController()
           acc = ''
           streamMode = 'full'
@@ -806,26 +818,34 @@ const COVERED_DEBOUNCE_MS = 1200
           // that follow paint as usual.
           if (mode === 'append') holding = false
         },
-        streamRetract: (mode) => {
+        streamRetract: (mode, fromSession) => {
+          if (!belongs(fromSession) || late()) return
           acc = ''
           streamMode = mode === 'append' ? 'append' : 'full'
           if (streamMode === 'append') holding = false
           const current = store.getSnapshot()
           store.set({ ...current, items: [] })
         },
-        streamDelta: (text) => {
+        streamDelta: (text, fromSession) => {
           if (typeof text !== 'string' || text === '') return
+          if (!belongs(fromSession) || late()) return
           acc += text
           // Withheld: keep the scratch text, leave the composer alone.
           if (holding) return
           const current = store.getSnapshot()
           // The store may still carry the proposal of an older draft (retention):
           // this result belongs to the draft the stream was requested for.
-          store.set({ ...current, phase: 'ready', items: [proposalOf()], forDraft: current.requested ?? current.forDraft })
+          store.set({
+            sessionId: streamSession,
+            ...current,
+            phase: 'ready',
+            items: [proposalOf()],
+            forDraft: current.requested ?? current.forDraft,
+          })
         },
-        streamFinal: (text, mode) => {
+        streamFinal: (text, mode, fromSession) => {
+          if (!belongs(fromSession) || late()) return
           streaming = false
-
           const current = store.getSnapshot()
           if (mode === 'append' || mode === 'full') streamMode = mode
           if (holding && streamMode === 'full') {
@@ -834,7 +854,7 @@ const COVERED_DEBOUNCE_MS = 1200
             holding = false
             lastSuppressed = true
             acc = ''
-            store.set({ ...current, phase: 'empty', items: [], requested: null, forDraft: current.requested ?? current.forDraft })
+            store.set({ sessionId: streamSession, ...current, phase: 'empty', items: [], requested: null, forDraft: current.requested ?? current.forDraft })
             return
           }
           holding = false
@@ -846,9 +866,10 @@ const COVERED_DEBOUNCE_MS = 1200
               ? text.slice(base.length)
               : text
           }
-          store.set({ ...current, phase: 'ready', items: [proposalOf()], forDraft: current.requested ?? current.forDraft })
+          store.set({ sessionId: streamSession, ...current, phase: 'ready', items: [proposalOf()], forDraft: current.requested ?? current.forDraft })
         },
-        streamDone: (meta) => {
+        streamDone: (meta, fromSession) => {
+          if (!belongs(fromSession) || late()) return
           streaming = false
           controller = null
           const current = store.getSnapshot()
@@ -858,6 +879,7 @@ const COVERED_DEBOUNCE_MS = 1200
           // once, it failed, and a quiet empty answer must not erase that fact.
           if (unchanged && current.phase === 'error') return
           store.set({
+            sessionId: streamSession,
             ...current,
             phase: unchanged || items.length === 0 ? 'empty' : 'ready',
             // The Host said "nothing to change" for this draft: keeping the older
@@ -868,13 +890,14 @@ const COVERED_DEBOUNCE_MS = 1200
             forDraft: current.requested ?? current.forDraft,
           })
         },
-        streamFail: (message) => {
+        streamFail: (message, fromSession) => {
+          if (!belongs(fromSession) || late()) return
           streaming = false
           controller = null
           const current = store.getSnapshot()
           // Keep the retry budget pointed at the right draft: forDraft must follow
           // this request, or the one-retry-per-draft guard never matches.
-          store.set({ ...current, phase: 'error', items: [], error: message, requested: null, forDraft: current.requested ?? current.forDraft })
+          store.set({ sessionId: streamSession, ...current, phase: 'error', items: [], error: message, requested: null, forDraft: current.requested ?? current.forDraft })
         },
         clear: (sessionId) => {
           const current = store.getSnapshot()
@@ -2361,7 +2384,7 @@ const COVERED_DEBOUNCE_MS = 1200
             if (buffer !== '') {
               const text = buffer
               buffer = ''
-              ghost.streamDelta(text)
+              ghost.streamDelta(text, live.sessionId)
             }
           }
           const queue = (text) => {
@@ -2375,7 +2398,7 @@ const COVERED_DEBOUNCE_MS = 1200
             if (idle !== null) clearTimeout(idle)
             idle = setTimeout(() => {
               active.abort()
-              ghost.streamFail('timed out')
+              ghost.streamFail('timed out', live.sessionId)
             }, live.timeoutMs || CLIENT_TIMEOUT_MS)
           }
           bump()
@@ -2388,7 +2411,7 @@ const COVERED_DEBOUNCE_MS = 1200
             retract: (data) => {
               bump()
               flush()
-              ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full')
+              ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full', live.sessionId)
             },
             delta: (data) => {
               bump()
@@ -2397,13 +2420,13 @@ const COVERED_DEBOUNCE_MS = 1200
             final: (data) => {
               bump()
               flush()
-              if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode)
+              if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode, live.sessionId)
               if (ghost.takeSuppressed?.() === true) report('suppressed', { sessionId: live.sessionId, detail: 'rewrite' })
             },
             done: (data) => {
               flush()
               markLive()
-              ghost.streamDone(data ?? {})
+              ghost.streamDone(data ?? {}, live.sessionId)
               // Most compose suggestions arrive over SSE: persist them too, or
               // only the JSON fallback would ever be reused.
               const settled = ghost.getSnapshot()
@@ -2413,7 +2436,7 @@ const COVERED_DEBOUNCE_MS = 1200
             },
             error: (data) => {
               const message = typeof data?.message === 'string' ? data.message : 'stream failed'
-              ghost.streamFail(message)
+              ghost.streamFail(message, live.sessionId)
               report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
             },
             json: (body) => {
@@ -2431,7 +2454,7 @@ const COVERED_DEBOUNCE_MS = 1200
               return
             }
             const message = error instanceof Error ? error.message : String(error)
-            ghost.streamFail(message)
+            ghost.streamFail(message, live.sessionId)
             report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
           }).finally(() => {
             if (idle !== null) clearTimeout(idle)
