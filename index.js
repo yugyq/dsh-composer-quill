@@ -190,7 +190,7 @@ const COMPOSE_RULES = [
   // Measured on a 120-line log whose id sits past the excerpt: four of four drafts
   // guessed a warehouse code rather than say the rest was cut off. A stronger note
   // alone still guessed two; the note plus this line guessed none.
-  'A quoted file excerpt is the beginning of a file, not the whole thing. When the note says the excerpt stops before the file ends, everything past that point is unknown to you: never guess a value that may be there, ask the user for it.',
+  'A quoted file may be only its first lines. When the note says the rest is unknown to you, everything past that point is unknown: never guess a value that may be there, ask the user for it.',
 ].join('\n')
 
 /** Append one JSONL diagnostic line next to the profile. Best-effort only. */
@@ -1123,7 +1123,14 @@ const MAX_SENT_ATTACHMENTS = 8
 const MAX_ATTACHMENT_NAME = 120
 const MAX_RECEIPT_CHARS = 200
 /** Enough of a file to answer "what does it say" without copying it into a prompt. */
-const MAX_FILE_EXCERPT_CHARS = 1600
+// A small file is worth handing over whole: it is the difference between the model
+// answering from the file and asking the user to paste it. Past that size only the
+// first lines travel, because a long file's interesting value is rarely in its head —
+// and a head pretending to be the file is how the model ends up inventing the rest.
+const SMALL_FILE_MAX_BYTES = 8 * 1024
+const WHOLE_FILE_MAX_CHARS = 12000
+const PREVIEW_MAX_LINES = 3
+const PREVIEW_MAX_CHARS = 400
 const MAX_FILE_EXCERPT_BYTES = 96 * 1024
 
 function normalizeAttachments(raw) {
@@ -1171,7 +1178,7 @@ function formatBytes(bytes) {
  * instead of being told that something exists. Files that are not text are left at
  * their name and size: a prompt full of bytes helps nobody.
  */
-async function readFileExcerpt(store, ref) {
+async function readFileInsight(store, ref) {
   const path = typeof store?.fileHostPath === 'function' ? store.fileHostPath(ref) : undefined
   if (typeof path !== 'string' || path === '') return null
   let handle = null
@@ -1180,11 +1187,18 @@ async function readFileExcerpt(store, ref) {
     const buffer = Buffer.alloc(MAX_FILE_EXCERPT_BYTES)
     const { bytesRead } = await handle.read(buffer, 0, MAX_FILE_EXCERPT_BYTES, 0)
     const slice = buffer.subarray(0, bytesRead)
+    // A NUL byte in the head means the file is not text at all: its name and size are
+    // the whole truth, and the note says so instead of quoting binary garbage.
     if (slice.includes(0)) return null
     const text = slice.toString('utf8')
-    const characters = Array.from(text)
-    const clipped = characters.slice(0, MAX_FILE_EXCERPT_CHARS).join('')
-    return { text: clipped, truncated: bytesRead < (ref?.bytes ?? 0) || characters.length > MAX_FILE_EXCERPT_CHARS }
+    const bytes = Number.isFinite(ref?.bytes) && ref.bytes > 0 ? ref.bytes : bytesRead
+    if (bytes <= SMALL_FILE_MAX_BYTES) {
+      const characters = Array.from(text)
+      const whole = characters.length > WHOLE_FILE_MAX_CHARS
+      return { mode: 'full', text: characters.slice(0, WHOLE_FILE_MAX_CHARS).join(''), clipped: whole || bytesRead < bytes }
+    }
+    const lines = text.split('\n').slice(0, PREVIEW_MAX_LINES).join('\n')
+    return { mode: 'preview', text: Array.from(lines).slice(0, PREVIEW_MAX_CHARS).join('') }
   } catch {
     return null
   } finally {
@@ -1227,13 +1241,17 @@ async function attachmentContent(ctx, sessionId, attachments) {
         continue
       }
       const ref = staged.attachment
-      const excerpt = await readFileExcerpt(store, ref)
+      const insight = await readFileInsight(store, ref)
       const label = `The user attached a file "${ref?.name ?? item.name}" (${formatBytes(ref?.bytes ?? item.bytes)}).`
-      if (excerpt === null) {
+      if (insight === null) {
         lines.push(`${label} Only its name and size are available; you do not have its contents at all — ask the user for them instead of guessing.`)
+      } else if (insight.mode === 'full') {
+        const cut = insight.clipped
+          ? '\n(this is as much of it as fits; anything past this point is unknown to you — never guess a value that may be there, ask the user for it)'
+          : ''
+        lines.push(`${label} Its text, in full:\n"""\n${insight.text}\n"""${cut}`)
       } else {
-        const more = excerpt.truncated ? '\n(the excerpt stops here; the rest of the file is unknown to you — never guess a value that may appear there, ask the user for it)' : ''
-        lines.push(`${label} Beginning of its text:\n"""\n${excerpt.text}\n"""${more}`)
+        lines.push(`${label} Only its first ${PREVIEW_MAX_LINES} lines are shown here; the rest of the file is unknown to you — never guess a value that may be there, ask the user for it:\n"""\n${insight.text}\n"""`)
       }
       continue
     }

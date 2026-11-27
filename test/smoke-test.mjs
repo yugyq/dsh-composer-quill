@@ -3678,7 +3678,7 @@ group('host: attachments')
   await checkAsync('a file longer than its excerpt says the rest is unknown', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'quill-long-'))
     const file = join(dir, 'build.log')
-    const filler = Array.from({ length: 200 }, (_, i) => `2026-11-27T09:00:00Z INFO step ${i} finished`).join('\n')
+    const filler = Array.from({ length: 300 }, (_, i) => `2026-11-27T09:00:00Z INFO step ${i} finished`).join('\n')
     writeFileSync(file, `${filler}\n仓编号：KX-7731\n`)
     const ref = { attachmentId: 'a3', name: 'build.log', bytes: statSync(file).size }
     const ctx = {
@@ -3692,9 +3692,33 @@ group('host: attachments')
     const read = await attachmentContent(ctx, 's-a', [{ kind: 'file', name: 'build.log', bytes: ref.bytes, receiptId: 'r' }])
     // The draft may ask for a value that sits past the cut: the note has to say so, or
     // the model fills the gap with a plausible-looking code instead of asking.
-    assert.ok(read.note.includes('the excerpt stops here'), 'the cut is named')
+    assert.ok(read.note.includes('first 3 lines'), 'the cut is named')
     assert.ok(read.note.includes('unknown to you'), 'and what is past it is called unknown')
     assert.ok(read.note.includes('ask the user for it'), 'with the thing to do instead')
+    assert.ok(read.note.includes('INFO step 0 finished'), 'the head is still quoted')
+    assert.equal(read.note.includes('KX-7731'), false, 'a value past the cut is not quoted')
+  })
+
+  await checkAsync('a small file is handed over whole', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'quill-small-'))
+    const file = join(dir, 'notes.txt')
+    writeFileSync(file, '订单号：BLUE-HERON-42\n仓编号：KX-7731\n')
+    const ref = { attachmentId: 'a4', name: 'notes.txt', bytes: statSync(file).size }
+    const ctx = {
+      get: (name) => (name === 'attachments'
+        ? { fileHostPath: () => file }
+        : name === 'fileUploads'
+          ? { resolve: () => ({ type: 'file', attachment: ref }) }
+          : null),
+      agents: { get: () => ({ session: { id: 's-a' } }) },
+    }
+    const read = await attachmentContent(ctx, 's-a', [{ kind: 'file', name: 'notes.txt', bytes: ref.bytes, receiptId: 'r' }])
+    // Reading a short file is cheap and the tail of it is often the point: quote it all
+    // and do not hedge, or the model asks the user to paste what it already has.
+    assert.ok(read.note.includes('Its text, in full'), 'a short file is quoted whole')
+    assert.ok(read.note.includes('订单号：BLUE-HERON-42'), 'the first line is there')
+    assert.ok(read.note.includes('仓编号：KX-7731'), 'and so is the last')
+    assert.equal(read.note.includes('unknown to you'), false, 'no hedge on a file it can read')
   })
 
   await checkAsync('an attachment the Host does not hold is said to be invisible', async () => {

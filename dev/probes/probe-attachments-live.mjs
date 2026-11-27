@@ -188,9 +188,21 @@ const descriptors = [
   { kind: 'file', name: 'notes.txt', bytes: Buffer.byteLength(fileText), receiptId: 'r-file' },
 ]
 
-const withImage = await compose('截图里的数字是（带图）', '这个截图里的数字是', [descriptors[0]], 's-live-a')
+// A single suggestion can hedge by chance even when the note is right (seen once in
+// four runs on the file arm), so a positive arm gets one retry before it is called a
+// failure. The negative arms are single-shot: an absent value must stay absent.
+async function confirms(label, draft, attachments, sessionId, wanted, tries = 2) {
+  let text = ''
+  for (let attempt = 1; attempt <= tries; attempt += 1) {
+    text = await compose(attempt === 1 ? label : `${label}（重试）`, draft, attachments, sessionId)
+    if (text.includes(wanted)) return text
+  }
+  return text
+}
+
+const withImage = await confirms('截图里的数字是（带图）', '这个截图里的数字是', [descriptors[0]], 's-live-a', '7342')
 const withoutImage = await compose('同一草稿（无附件）', '这个截图里的数字是', [], 's-live-b')
-const withFile = await compose('仓编号是（带文件）', '我贴的文件里仓编号是', [descriptors[1]], 's-live-c')
+const withFile = await confirms('仓编号是（带文件）', '我贴的文件里仓编号是', [descriptors[1]], 's-live-c', 'KX-7731')
 const withoutFile = await compose('同一草稿（无附件）', '我贴的文件里仓编号是', [], 's-live-d')
 const binaryArm = await compose('二进制文件', '这个文件里写了什么', [{ kind: 'file', name: 'report.bin', bytes: binary.byteLength, receiptId: 'r-bin' }], 's-live-e')
 
