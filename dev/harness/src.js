@@ -711,6 +711,26 @@ async function main() {
           const rect = panel.getBoundingClientRect()
           return { shown: getComputedStyle(panel).display !== 'none', h: Math.round(rect.height), w: Math.round(rect.width) }
         })(),
+        // 面板顶边压进「用户自己打的最后一行」多少像素：必须是 0。
+        coverY: (() => {
+          const panel = document.querySelector('[data-composer-quill="panel"]')
+          const editor = document.querySelector('[data-composer-input]')
+          if (panel === null || editor === null) return null
+          const panelRect = panel.getBoundingClientRect()
+          if (panelRect.height === 0) return 0
+          const walk = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+          let last = null
+          while (walk.nextNode() !== null) last = walk.currentNode
+          if (last === null || last.length === 0) return null
+          const range = document.createRange()
+          range.setStart(last, Math.max(0, last.length - 8))
+          range.setEnd(last, last.length)
+          const rects = Array.from(range.getClientRects())
+          if (rects.length === 0) return null
+          const typed = rects[rects.length - 1]
+          const overlap = Math.min(typed.bottom, panelRect.bottom) - Math.max(typed.top, panelRect.top)
+          return overlap <= 0 ? 0 : Math.round(overlap * 10) / 10
+        })(),
       }
     },
     ghostNow() {

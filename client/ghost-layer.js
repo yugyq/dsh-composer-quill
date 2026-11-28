@@ -217,14 +217,17 @@
         // 面板从第二行开始，第一行留在输入框里，避免盖住用户已经打出来的字。
         const line = Number.parseFloat(style.lineHeight) || rect.height || 24
         const height = textEl === null ? 0 : textEl.scrollHeight
+        // 面板必须从「第一行字形的下沿」再往下 2px 开始：这一行常常是用户自己打的
+        // 最后一行（caret 锚点），按行盒 top+lineHeight 算会切掉它的降部（，。gy）。
+        const glyphBottom = Math.round(leading + glyphHeight)
         if (panelEl !== null) {
           if (height > line * 1.6) {
             Object.assign(panelEl.style, {
               display: '',
               left: `${Math.round(contentLeft - origin.left - 10)}px`,
-              top: `${Math.round(lineTop + line - 6)}px`,
+              top: `${Math.round(lineTop + glyphBottom + 2)}px`,
               width: `${Math.round(blockWidth + 20)}px`,
-              height: `${Math.round(height - line + 12)}px`,
+              height: `${Math.round(height - glyphBottom - 2 + 10)}px`,
             })
             if (host !== null) host.setAttribute('data-mode', 'panel')
           } else {

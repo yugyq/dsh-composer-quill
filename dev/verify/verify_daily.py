@@ -1629,9 +1629,12 @@ def main() -> int:
             and s64.get("hostParent") == "BODY"
             and s64.get("mode") == "panel"
             and (s64.get("panel") or {}).get("shown") is True
+            # 面板只能从用户那一行下面开始：压进降部就是把人家打的字切掉
+            and s64.get("coverY") == 0
             and alive,
             f"字数={s64.get('chars')} 截断={s64.get('truncated')} 灰字高={s64.get('textHeight')} "
-            f"宿主={s64.get('hostParent')} 模式={s64.get('mode')} 面板={s64.get('panel')} 卡片高={s64.get('cardHeight')} 应答={alive}",
+            f"宿主={s64.get('hostParent')} 模式={s64.get('mode')} 面板={s64.get('panel')} "
+            f"压住={s64.get('coverY')}px 卡片高={s64.get('cardHeight')} 应答={alive}",
         )
 
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
