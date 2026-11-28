@@ -1,24 +1,22 @@
-# Quill · dsh-composer-quill
+# 续笔 · dsh-composer-quill
 
-Completion for the DSH composer. When a turn settles it offers a few next messages; when you pause while typing it finishes the sentence. `Tab` takes it, `Esc` dismisses it — sending is still your key to press.
+Ghost-text completion for the DSH composer: a few "next sentences" when a turn ends, the rest of your sentence as you pause. `Tab` accepts, `Esc` dismisses; sending stays your call. [中文](README.md)
 
-[中文说明](README.md)
+![Demo: an empty composer offers the next sentence; typing draws the tail in grey; Tab accepts](docs/assets/demo.gif)
 
-> If it helps you, give it a [Star](https://github.com/yugyq/dsh-composer-quill).
-
-![Next message: candidates while the composer is empty, with the position shown on the chip](docs/assets/real-next.png)
+- **Stuck at the start**: a few next sentences after every turn, `←` `→` to cycle
+- **Half-formed sentences**: type a start, the tail is filled in; a messy sentence gets a cleaned-up rewrite
+- **Show it what you mean**: screenshots go to the model itself, anything you already typed is reused from history — no extra calls
 
 ```bash
 dsh plugin --profile desktop add dsh-composer-quill
 ```
 
-- **Staring at an empty box**: a few next messages appear when the turn ends; editing one is faster than starting from nothing
-- **A sentence that will not come together**: type the first half and it continues; if the whole thing is tangled it returns one tidied version
-- **Interrupted mid-thought**: switch away and back, the suggestion is still there
-- **The paragraph you retype every day**: pulled from your own history, no model call
-- **Asking with a screenshot or a file**: the picture goes to the model itself, a file is quoted from its opening lines, so "what does this screenshot say" stops being an excuse to invent
+> If it helps you, give it a [Star](https://github.com/yugyq/dsh-composer-quill).
 
-Requests go through the model route you already configured: there is no third-party server, and nothing is reported. "On your machine" only means no extra hop, though — the last two turns and your draft are sent to the model service you configured (usually a cloud one), and masking is best-effort over nine shapes.
+Press `Ctrl+R` once to reload the client; only a version that changed the host `index.js` needs a DSH restart.
+
+Requests go through the model route you already configured: no third-party server, nothing reported. "Local" only means no extra hop — the last two turns and your draft are sent to your model provider, and masking is best effort over nine shapes.
 
 ## Four kinds of suggestion
 
