@@ -158,6 +158,8 @@ const labels = {
   'hint.retry': '重试',
   'hint.retrying': '重试中…',
   'hint.history': '按 Tab 补全（历史）',
+  'hint.keys': 'Tab 采纳 · Esc 关闭 · Ctrl+Shift+Space 手动',
+  'hint.busy': '回答中 · 建议暂停',
   'hint.position': '第 {index}/{total} 条，←/→ 切换',
   'status.prefix': '建议：',
   'settings.title': '续笔',

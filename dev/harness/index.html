@@ -13,6 +13,9 @@
   .grow { position:relative; display:flex; align-items:flex-start; gap:8px; }
   .editor { flex:1; min-height:48px; outline:none; white-space:pre-wrap; word-break:break-word; }
   .placeholder { position:absolute; left:0; top:0; color:#9aa0a6; pointer-events:none; }
+  /* The host hides its own placeholder once there is a draft; the fixture has to as well,
+     or every recorded frame shows the hint text stacked under the typed words. */
+  .grow:has(.editor:not(:empty)) .placeholder { display:none; }
 </style>
 </head>
 <body>
