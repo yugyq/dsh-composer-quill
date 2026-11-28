@@ -1603,7 +1603,7 @@ def main() -> int:
             f"换前={s63_before} 换后={s63_after} 图层={s63_layers}",
         )
 
-        # ---- S64 长建议不许被省略号截断
+        # ---- S64 长建议按两行裁好，不卡死
         page.reload()
         page.wait_for_selector("[data-composer-input]")
         page.wait_for_timeout(1200)
@@ -1611,12 +1611,15 @@ def main() -> int:
         h("typeLive('把这段构建日志')")
         page.wait_for_timeout(2500)
         s64 = h("ghostFit()")
+        # 借高度停在这里，是升级后的取舍：宁可两行加省略号，也不能让排版在真机上死循环。
+        # 所以断言钉两件事——省略号出现（说明裁切走的是设计好的那条路），
+        # 以及页面仍然能动（排版没有把自己递归进去）。
+        alive = page.evaluate("1 + 1") == 2
         h("setComposeMode('ok')")
         record(
-            "S64 长建议整段画出来，不拿省略号截断",
-            s64.get("chars", 0) > 300 and s64.get("truncated") is False
-            and (s64.get("cardHeight") or 0) > 100,
-            f"字数={s64.get('chars')} 截断={s64.get('truncated')} 卡片高={s64.get('cardHeight')} 上限={s64.get('cardMaxHeight')}",
+            "S64 长建议按两行裁好，页面不卡死",
+            s64.get("truncated") is True and (s64.get("chars") or 0) > 20 and alive,
+            f"字数={s64.get('chars')} 截断={s64.get('truncated')} 卡片高={s64.get('cardHeight')} 应答={alive}",
         )
 
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
