@@ -3081,8 +3081,10 @@ const COVERED_DEBOUNCE_MS = 1200
             // Hydrate first, while the store is untouched: coming back to a Session
             // whose conversation has not moved is not a new question, and asking the
             // model again would show "补写中…" for something already known.
-            if (!running && sessionId !== null && nextEnabled && draftEmpty && settings.mode !== 'manual'
-              && hydrateStored('next', '')) {
+            const wantNext = !running && sessionId !== null && nextEnabled && draftEmpty && settings.mode !== 'manual'
+            const hydrated = wantNext ? hydrateStored('next', '') : false
+            report('dock-decision', { sessionId, detail: `switch want=${wantNext} hydrated=${hydrated}` })
+            if (wantNext && hydrated) {
               // A stored suggestion answers this Session, but the previous Session's
               // request and debounce timer must still stop: their results would otherwise
               // land on the composer that now shows a different conversation.
@@ -3158,7 +3160,10 @@ const COVERED_DEBOUNCE_MS = 1200
           if (draft.trim() !== '') sendDock({ type: 'typed' })
           if (!composeEnabled || sessionId === null || running || settings.mode === 'manual') return
           if (draft.trim().length < MIN_DRAFT_CHARS) {
-            if (state.kind === 'compose') ghost.clear(sessionId)
+            // Only this Session's compose answer may be dropped here: right after a switch
+            // the store still describes the Session we left, and clearing on that view
+            // wiped the suggestion that had just been hydrated for this one.
+            if (state.kind === 'compose' && state.sessionId === sessionId) ghost.clear(sessionId)
             // Clearing the composer (after accepting, or by hand) must re-arm the
             // next-message prediction instead of leaving the composer silent.
             if (draft === '' && dockBooking.current.hadDraft) {
@@ -3199,7 +3204,7 @@ const COVERED_DEBOUNCE_MS = 1200
           // reply has to leave the screen too — cancel() only stops a stream.
           if (!sameAttachments && lastRequested.current !== null) {
             ghost.cancel()
-            if (state.kind === 'compose') ghost.clear(sessionId)
+            if (state.kind === 'compose' && state.sessionId === sessionId) ghost.clear(sessionId)
           }
             // Not claimed here: request() records the draft only when a call really
             // starts. Marking a suppressed draft as answered stalled the ghost — the
