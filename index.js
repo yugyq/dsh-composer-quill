@@ -872,6 +872,31 @@ function parseList(reply, key, limit, max, skipToken) {
   return out
 }
 
+/**
+ * How many single-character edits turn one short word into another.
+ *
+ * The prompt asks for a control marker (`REWRITE:`), and a model at temperature
+ * 1.0 sometimes misspells it — a real reply carried `RERITE:`, which the strict
+ * marker test missed, so the raw marker plus the whole sentence were painted into
+ * the composer as if they were the tail. Two edits is enough to catch that
+ * without touching real text: no all-caps 7-letter word in a draft is one edit
+ * away from `REWRITE`.
+ */
+function editDistance(a, b) {
+  const left = Array.from(a)
+  const right = Array.from(b)
+  let previous = [0, ...right.map((_, index) => index + 1)]
+  for (let i = 0; i < left.length; i += 1) {
+    const current = [i + 1]
+    for (let j = 0; j < right.length; j += 1) {
+      const cost = left[i] === right[j] ? 0 : 1
+      current.push(Math.min(previous[j + 1] + 1, current[j] + 1, previous[j] + cost))
+    }
+    previous = current
+  }
+  return previous[right.length]
+}
+
 /** Split a compose reply into its case: appended tail, or a full rewrite. */
 /**
  * Drop the part of a tail that only repeats the end of the draft.
@@ -898,10 +923,24 @@ function parseComposeReply(reply, draft, options = {}) {
   // Whichever language the caller resolved (the setting, then the system one).
   const language = options.language ?? ''
   if (typeof reply !== 'string') return null
-  const text = reply.replace(/\r\n/g, '\n').trim()
+  let text = reply.replace(/\r\n/g, '\n').trim()
   if (text === '') return null
   const marker = /^\s*rewrite\s*:\s*/i
-  if (marker.test(text)) {
+  // A misspelled marker is still a marker: `RERITE:` used to reach the composer
+  // verbatim, because the strict test below only accepts the exact spelling.
+  const control = /^\s*([A-Z]{4,12})\s*[:：]\s*/.exec(text)
+  let forcedRewrite = false
+  if (control !== null) {
+    const word = control[1]
+    if (editDistance(word, 'REWRITE') <= 2) {
+      forcedRewrite = true
+      text = text.slice(control[0].length).trim()
+      if (text === '') return null
+    } else if (editDistance(word, 'SKIP') <= 1 || editDistance(word, 'NOOP') <= 1) {
+      return null
+    }
+  }
+  if (forcedRewrite || marker.test(text)) {
     const rewritten = text.replace(marker, '').trim()
     // The prompt carries a masked draft, so a rewrite can echo a redaction
     // marker back. Never let that marker into the user's own message.

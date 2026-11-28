@@ -235,6 +235,25 @@ check('a tail that restates the last word of the draft is trimmed, not doubled',
   assert.equal(parseComposeReply('需要', '这个接口的返回里有三个字段需要'), null)
 })
 
+check('a misspelled REWRITE marker is still a marker, not part of the sentence', () => {
+  const { parseComposeReply } = host.__test
+  // Seen in a real reply at temperature 1.0: the marker lost a letter, so the
+  // strict test missed it and the composer literally showed "RERITE:" followed
+  // by the whole message, stacked under the draft.
+  const missing = parseComposeReply('RERITE:\n但是我还是想先确认一下这个方案。', '但是', { language: 'zh' })
+  assert.equal(missing.mode, 'full')
+  assert.equal(missing.text, '但是我还是想先确认一下这个方案。')
+  const shorter = parseComposeReply('REWRIT: 但是我还是想先确认一下这个方案。', '但是', { language: 'zh' })
+  assert.equal(shorter.mode, 'full')
+  assert.equal(shorter.text, '但是我还是想先确认一下这个方案。')
+  // A marker with nothing after it is not a suggestion.
+  assert.equal(parseComposeReply('REWRITE:', '把这段日志整理一下'), null)
+  // Ordinary upper-case words are not markers: "CPU:" is content.
+  const cpu = parseComposeReply('CPU: 占用有点高', '这台机器的', { language: 'zh' })
+  assert.equal(cpu.mode, 'append')
+  assert.equal(cpu.tail, 'CPU: 占用有点高')
+})
+
 // ------------------------------------------------- Host route, fake model
 group('host: routes and streaming')
 
