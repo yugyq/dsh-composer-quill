@@ -224,16 +224,8 @@
     const paintedSession = React.useRef(sessionId)
     // A dock that has just mounted is the one on screen: it takes the layer from any
     // dock the host left alive behind it, so a stale Session cannot paint here.
-    //
-    // Claiming sweeps every layer in the document, including the one this render just
-    // painted, and effects run after render: without the repaint below a switch left the
-    // composer blank until the next keystroke.
-    const claimAndPaint = () => {
-      if (typeof ghostLayer.claim === 'function') ghostLayer.claim()
-      if (typeof paintData.paintNow === 'function') paintData.paintNow()
-    }
     React.useEffect(() => {
-      claimAndPaint()
+      if (typeof ghostLayer.claim === 'function') ghostLayer.claim()
       return () => { if (typeof ghostLayer.release === 'function') ghostLayer.release() }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ghostLayer])
@@ -242,12 +234,8 @@
         paintedSession.current = sessionId
         // The pane showing this Session is now the one on screen: take the layer
         // ownership away from whichever dock was drawing before it (issue #10).
-        // Claim takes the layer from the dock that was drawing here; the sweep that
-        // comes with it also removes this render's layer, so the repaint has to be
-        // the LAST of the three — claim, clear, paint.
         if (typeof ghostLayer.claim === 'function') ghostLayer.claim()
         ghostLayer.clear()
-        if (typeof paintData.paintNow === 'function') paintData.paintNow()
         return undefined
       }
       if (!visible) {
