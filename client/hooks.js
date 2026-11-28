@@ -242,8 +242,12 @@
         paintedSession.current = sessionId
         // The pane showing this Session is now the one on screen: take the layer
         // ownership away from whichever dock was drawing before it (issue #10).
-        claimAndPaint()
+        // Claim takes the layer from the dock that was drawing here; the sweep that
+        // comes with it also removes this render's layer, so the repaint has to be
+        // the LAST of the three — claim, clear, paint.
+        if (typeof ghostLayer.claim === 'function') ghostLayer.claim()
         ghostLayer.clear()
+        if (typeof paintData.paintNow === 'function') paintData.paintNow()
         return undefined
       }
       if (!visible) {
