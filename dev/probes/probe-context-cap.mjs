@@ -1,7 +1,7 @@
 /**
  * Show what CONTEXT_BUDGET actually does: same draft, growing transcript, and the
- * prompt size under the current budget. Run twice — once plain, once with
- * DSH_QUILL_CONTEXT=full — to compare the caps.
+ * prompt size under the current budget. There is one budget now; to compare a
+ * candidate set of numbers, edit CONTEXT_BUDGET and run this again.
  */
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -50,9 +50,8 @@ function fakeCtx() {
   }
 }
 
-const mode = String(process.env.DSH_QUILL_CONTEXT ?? 'tight').toLowerCase() === 'full' ? 'full' : 'tight'
-const caps = mode === 'tight' ? { ctx: 1600, msg: 800 } : { ctx: 3200, msg: 2200 }
-console.log(`预算=${mode}   （上下文上限 ${caps.ctx} 字符（主补写）/ 单条消息 ${caps.msg}）`)
+const caps = { ctx: 3200, msg: 2200 }
+console.log(`预算：上下文上限 ${caps.ctx} 字符（主补写）/ 单条消息 ${caps.msg}`)
 for (const turns of [2, 6, 12, 24, 40]) {
   const events = transcript(turns)
   const chars = events.reduce((sum, e) => sum + e.data.content[0].text.length, 0)
@@ -60,7 +59,7 @@ for (const turns of [2, 6, 12, 24, 40]) {
   await produceCompose(ctx, {
     sessionId: 'probe-context-cap',
     draft: '帮我看下这个报错',
-    key: `cap-${mode}-${turns}`,
+    key: `cap-${turns}`,
     events,
     session,
     send: () => {},

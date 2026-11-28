@@ -1,6 +1,6 @@
 # 开发与验证
 
-> 适用版本：0.33.7 ｜ 宿主是手写 ESM，没有构建；浏览器端源码在 `client/`，由 `npm run build:client` 拼成 `client.js`
+> 适用版本：0.33.8 ｜ 宿主是手写 ESM，没有构建；浏览器端源码在 `client/`，由 `npm run build:client` 拼成 `client.js`
 
 
 ## 1. 目录结构
@@ -191,17 +191,21 @@ python dev/verify/verify_with_retry.py --attempts 3 --threshold 2
 设置卡片注册在 `settings.section`（不是 `settings.general.item`）：它是设置导航里独立的一节，
 自带 `id` / `order` / `label`。夹具里 `showSettings()` 按这个名字找组件。
 
-### 上下文预算与回滚
+### 上下文预算
 
-默认按「紧」预算跑：transcript 1800 字符、单条消息 800 字符、最多 6 行。
+只有一组数字（`index.js` 的 `CONTEXT_BUDGET`），没有第二套「紧」预算了：
 
-要回到旧行为（9000 / 2200 / 14），启动 DSH 前设一个环境变量：
+| 位置 | 字符上限 | 行数上限 |
+| --- | --- | --- |
+| 主路径 transcript | 3200 | 32 |
+| 短草稿 transcript | 2400 | 24 |
+| 下一句 transcript | 3200 | 32 |
+| 单条消息 | 2200 | — |
+| 兜底（`transcriptOf` 默认） | 9000 | 32 |
 
-```bash
-DSH_QUILL_CONTEXT=full
-```
+两条约束里**只有字符数是预算**；行数只用来挡住病态的事件数量。之前 8 行的上限在短消息组成的对话里只装进 607 字（预算 1600），两轮前的事实就这样被丢掉了——所以行数不再是瓶颈。
 
-这是这次省 token 改动的回滚开关——不需要改代码、不需要重新发布。代价只是长对话里能带的上文变少。
+实测（真模型，事实在 10 轮前、不给 focus 回填）：8 行只装 603 字，命中 0/4；32 行装 1599 字，命中 4/4，且回答更快（模型不再打太极）。长消息那条同理：单条 800 字把结论挖掉时命中 0/4，2200 字时 4/4。代价是每次多约 580 个输入 token（flash 未命中约 ¥0.0003，命中缓存约 1/50）。
 
 ### 二分场景套件
 
@@ -271,7 +275,6 @@ DSH_SCENARIO_LIMIT=14 python dev/verify/verify_daily.py
 | --- | --- |
 | `DSH_COMPOSER_QUILL_NO_CACHE=1` | 关闭宿主磁盘缓存（读与写都跳过）。单测默认开启，避免污染真实缓存 |
 | `DSH_COMPOSER_QUILL_STATE_DIR` | 把日志/账本/缓存钉到一个目录（优先级最高）。单测默认指向临时目录 |
-| `DSH_QUILL_CONTEXT=full` | 回到旧的大上下文预算（见 3.4） |
 
 ## 5. 发布清单
 

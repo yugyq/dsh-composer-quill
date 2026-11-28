@@ -33,21 +33,16 @@ const TOKEN_HEADER = 'x-composer-quill-token'
 const CLIENT_HEADER = 'x-composer-quill-client'
 
 const MAX_CANDIDATES = 3
-// Context budget: one group, every call site reads from here. "tight" is the
-// default — the old numbers were sized for a 9000-character transcript nobody
-// measured. DSH_QUILL_CONTEXT=full restores them without a rebuild, which is the
-// rollback switch for the whole change.
-const TIGHT_CONTEXT = String(process.env.DSH_QUILL_CONTEXT ?? 'tight').toLowerCase() !== 'full'
+// Context budget: one group, every call site reads from here. There is no second
+// "tight" set any more — a 1600-character transcript held two turns, and the model
+// answered with invented placeholders when the fact it needed sat just outside it.
+// Rows are a ceiling only; `chars` is what bounds the prompt.
 const CONTEXT_BUDGET = Object.freeze({
-  // Rows are a ceiling, not the budget: an 8-row cap on a conversation whose
-  // messages are ~70 characters kept 607 of the 1600 characters it was allowed,
-  // and dropped a fact that sat two turns earlier. `chars` is what bounds the
-  // prompt; `rows` only stops pathological event counts from being walked.
-  short: { rows: TIGHT_CONTEXT ? 24 : 32, chars: TIGHT_CONTEXT ? 1200 : 2400 },
-  main: { rows: TIGHT_CONTEXT ? 32 : 48, chars: TIGHT_CONTEXT ? 1600 : 3200 },
-  next: { rows: TIGHT_CONTEXT ? 32 : 48, chars: TIGHT_CONTEXT ? 1600 : 3200 },
-  message: TIGHT_CONTEXT ? 800 : 2200,
-  fallback: TIGHT_CONTEXT ? 1800 : 9000,
+  short: { rows: 24, chars: 2400 },
+  main: { rows: 32, chars: 3200 },
+  next: { rows: 32, chars: 3200 },
+  message: 2200,
+  fallback: 9000,
 })
 const MAX_TRANSCRIPT_CHARS = CONTEXT_BUDGET.fallback
 const MAX_MESSAGE_CHARS = CONTEXT_BUDGET.message
