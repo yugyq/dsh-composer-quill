@@ -241,7 +241,19 @@ DSH_SCENARIO_LIMIT=14 python dev/verify/verify_daily.py
 
 浏览器事件（经 `/beacon` 落到同一文件）：`dock`（挂载时的 props 概况）、`dock-state`（每次判定变化，含 `phase/kind/items/nextActive/pendingCompose/pendingNext/draftEmpty/running`）、`paint`、`hydrated`、`reused`/`dedupe`/`covered`、`not-live`、`render-error`。
 
-### 4.2 常见症状 → 排查路径
+### 4.2 先在文档里找答案，再改代码
+
+遇到「这不应该发生」的时刻，第一轮不要写代码，先查那个原语本身：浏览器 API 与框架生命周期的语义、协议层的规定、别人踩过的同一类坑。查到的结论写进提交信息或 CHANGELOG 时带上出处，让「我查过」和「我猜的」在仓库里能分辨。
+
+本仓库交过学费的三次：
+
+- **`fetch(..., { keepalive: true })` 在文档被替换时整批丢弃**——从「模块报了到、0.08 秒后 `/history` 就到了、但 `paint` 一条都没有」反推了两轮、75 条样本才敢下结论；这是规范里写明的行为，搜一次就到。
+- **在 `useEffect` 回调里调 `useRef`**——触发 `Invalid hook call`，面板被错误边界接走，场景 74→23；Rules of Hooks 第一条就是它。
+- **迟到的帧属于谁**——「请求身份」在请求层是老问题（latest-request-wins、请求 id 绑快照），在第四个同类 bug 之后才收敛成 `RequestId`；先看别人怎么解，第一个 bug 时就该收敛。
+
+先查并不等于查完再动手：能测量就直接测量（本仓库大量结论来自日志与探针），但「语义层面的为什么」优先找文档，而不是靠改一版跑一遍去试。
+
+### 4.3 常见症状 → 排查路径
 
 | 症状 | 先看什么 |
 | --- | --- |
@@ -253,7 +265,7 @@ DSH_SCENARIO_LIMIT=14 python dev/verify/verify_daily.py
 | 重启后建议没了 | `cache-restored` 的条目数、`composer-quill-cache.json` 是否可写 |
 | `/history` 恒为 0、`next` 报 `empty-thread` | 看日志的 `events` 字段：等于 3（只有引导事件）= 宿主没持有该会话的 transcript，插件无能为力（见 ARCHITECTURE 已知限制 1） |
 
-### 4.3 环境变量
+### 4.4 环境变量
 
 | 变量 | 作用 |
 | --- | --- |
