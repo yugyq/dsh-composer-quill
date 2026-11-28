@@ -920,7 +920,7 @@
             // Only this Session's compose answer may be dropped here: right after a switch
             // the store still describes the Session we left, and clearing on that view
             // wiped the suggestion that had just been hydrated for this one.
-            if (state.kind === 'compose' && state.sessionId === sessionId) ghost.clear(sessionId)
+            if (ownsCompose(state, sessionId)) ghost.clear(sessionId)
             // Clearing the composer (after accepting, or by hand) must re-arm the
             // next-message prediction instead of leaving the composer silent.
             if (draft === '' && dockBooking.current.hadDraft) {
@@ -961,7 +961,7 @@
           // reply has to leave the screen too — cancel() only stops a stream.
           if (!sameAttachments && lastRequested.current !== null) {
             ghost.cancel()
-            if (state.kind === 'compose' && state.sessionId === sessionId) ghost.clear(sessionId)
+            if (ownsCompose(state, sessionId)) ghost.clear(sessionId)
           }
             // Not claimed here: request() records the draft only when a call really
             // starts. Marking a suppressed draft as answered stalled the ghost — the

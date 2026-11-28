@@ -275,6 +275,16 @@ const COVERED_DEBOUNCE_MS = 1200
       }
     }
 
+    // Whether a compose answer sitting in the store belongs to the Session now on
+    // screen. The store outlives a switch, so a branch that clears "the old compose
+    // answer" must not use it as a verdict about this Session: doing that erased the
+    // suggestion the mount effect had just hydrated (measured 08:58:01.727Z, real app).
+    function ownsCompose(state, sessionId) {
+      return state !== null && typeof state === 'object'
+        && state.kind === 'compose'
+        && state.sessionId === sessionId
+    }
+
     function nextVisible(input) {
       const live = input ?? {}
       if (live.nextEnabled === false || live.running === true) return false

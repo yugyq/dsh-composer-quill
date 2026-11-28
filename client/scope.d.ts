@@ -37,3 +37,4 @@ declare function composeVisible(input: any): boolean
 declare function nextAskForAttachments(input: any): boolean
 declare function closeOnEscape(input: any): boolean
 declare function composerForDock(sessionId: string | null): Element | null
+declare function ownsCompose(state: any, sessionId: string | null): boolean

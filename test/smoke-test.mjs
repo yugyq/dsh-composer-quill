@@ -1330,6 +1330,16 @@ check('a picture in an empty composer is a new next-message question', () => {
   assert.equal(ask({ live: live({ enabled: false }) }), false, 'the whole plugin is off')
 })
 
+check('only this Session\'s own compose answer may be cleared on a switch', () => {
+  const { ownsCompose } = moduleExports.__test
+  const compose = (over) => ({ kind: 'compose', sessionId: 's-here', ...over })
+  assert.equal(ownsCompose(compose({}), 's-here'), true, 'this Session is answering this draft')
+  assert.equal(ownsCompose(compose({ sessionId: 's-left' }), 's-here'), false, 'the store still describes the Session we left')
+  assert.equal(ownsCompose(compose({ kind: 'next' }), 's-here'), false, 'a next-message candidate is not a compose answer')
+  assert.equal(ownsCompose(null, 's-here'), false, 'an empty store owns nothing')
+  assert.equal(ownsCompose(compose({}), null), false, 'no Session, nothing to own')
+})
+
 check('the previous Session next-message candidates are not shown in this one', () => {
   const { nextVisible } = moduleExports.__test
   const live = (over) => ({

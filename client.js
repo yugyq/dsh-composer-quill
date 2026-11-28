@@ -299,6 +299,16 @@ const COVERED_DEBOUNCE_MS = 1200
       }
     }
 
+    // Whether a compose answer sitting in the store belongs to the Session now on
+    // screen. The store outlives a switch, so a branch that clears "the old compose
+    // answer" must not use it as a verdict about this Session: doing that erased the
+    // suggestion the mount effect had just hydrated (measured 08:58:01.727Z, real app).
+    function ownsCompose(state, sessionId) {
+      return state !== null && typeof state === 'object'
+        && state.kind === 'compose'
+        && state.sessionId === sessionId
+    }
+
     function nextVisible(input) {
       const live = input ?? {}
       if (live.nextEnabled === false || live.running === true) return false
@@ -3151,7 +3161,7 @@ const COVERED_DEBOUNCE_MS = 1200
             // Only this Session's compose answer may be dropped here: right after a switch
             // the store still describes the Session we left, and clearing on that view
             // wiped the suggestion that had just been hydrated for this one.
-            if (state.kind === 'compose' && state.sessionId === sessionId) ghost.clear(sessionId)
+            if (ownsCompose(state, sessionId)) ghost.clear(sessionId)
             // Clearing the composer (after accepting, or by hand) must re-arm the
             // next-message prediction instead of leaving the composer silent.
             if (draft === '' && dockBooking.current.hadDraft) {
@@ -3192,7 +3202,7 @@ const COVERED_DEBOUNCE_MS = 1200
           // reply has to leave the screen too — cancel() only stops a stream.
           if (!sameAttachments && lastRequested.current !== null) {
             ghost.cancel()
-            if (state.kind === 'compose' && state.sessionId === sessionId) ghost.clear(sessionId)
+            if (ownsCompose(state, sessionId)) ghost.clear(sessionId)
           }
             // Not claimed here: request() records the draft only when a call really
             // starts. Marking a suppressed draft as answered stalled the ghost — the
@@ -4162,6 +4172,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, composeVisible, composerForDock, token, closeOnEscape, layerStats, pickEditor, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, ownsCompose, composeVisible, composerForDock, token, closeOnEscape, layerStats, pickEditor, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
