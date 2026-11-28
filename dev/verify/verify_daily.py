@@ -1609,7 +1609,7 @@ def main() -> int:
             f"换前={s63_before} 换后={s63_after} 图层={s63_layers}",
         )
 
-        # ---- S64 长建议整段画出来，不拿省略号截断
+        # ---- S64 长建议整段留在输入框里：卡片撑高，不铺底板、不拿省略号截断
         page.reload()
         page.wait_for_selector("[data-composer-input]")
         page.wait_for_timeout(1200)
@@ -1617,24 +1617,22 @@ def main() -> int:
         h("typeLive('把这段构建日志')")
         page.wait_for_timeout(2500)
         s64 = h("ghostFit()")
-        # 灰字这一层挂在 <body> 上做 position:fixed，量的是视口预算而不是输入框那两行；
-        # 断言钉三件事——整段都画了（没有省略号）、真的占了多行、宿主不再裁切。
         alive = page.evaluate("1 + 1") == 2
         h("setComposeMode('ok')")
         record(
-            "S64 长建议整段画出来，不拿省略号截断",
+            "S64 长建议把输入框撑高，整段留在输入区里",
             s64.get("truncated") is False
             and (s64.get("chars") or 0) > 300
             and (s64.get("textHeight") or 0) > 120
             and s64.get("hostParent") == "BODY"
-            and s64.get("mode") == "panel"
-            and (s64.get("panel") or {}).get("shown") is True
-            # 面板只能从用户那一行下面开始：压进降部就是把人家打的字切掉
-            and s64.get("coverY") == 0
+            # 不再有自己的底板：靠宿主那张卡片长高来装下灰字
+            and s64.get("panelExists") is False
+            and (s64.get("cardHeight") or 0) >= (s64.get("textHeight") or 0) - 4
+            and (s64.get("insideCard") is not None and s64.get("insideCard") >= -2)
             and alive,
             f"字数={s64.get('chars')} 截断={s64.get('truncated')} 灰字高={s64.get('textHeight')} "
-            f"宿主={s64.get('hostParent')} 模式={s64.get('mode')} 面板={s64.get('panel')} "
-            f"压住={s64.get('coverY')}px 卡片高={s64.get('cardHeight')} 应答={alive}",
+            f"卡片高={s64.get('cardHeight')} 卡内余量={s64.get('insideCard')} "
+            f"底板={s64.get('panelExists')} 编辑器min-h={s64.get('editorMinHeight')} 应答={alive}",
         )
 
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")

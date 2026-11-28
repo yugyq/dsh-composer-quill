@@ -3,7 +3,7 @@
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.33.10'
+    const BUILD = '0.33.11'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */

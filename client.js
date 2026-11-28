@@ -27,7 +27,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.33.10'
+    const BUILD = '0.33.11'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -1868,7 +1868,15 @@ const COVERED_DEBOUNCE_MS = 1200
       const token = { session: ownSession }
       let host = null
       let textEl = null
-      let panelEl = null
+      // 宿主自己管输入框高度：我们把 min-height 抬上去，让卡片跟着灰字长。
+      // 抬过多少要记住，清理时还回去；宿主若把高度钉死，抬一次不长就收手。
+      let restoreMinHeight = ''
+      let grownFor = -1
+      let growBlocked = false
+      let growBudget = 200
+      // 上一次 render 给的完整文本：截断会改写文本节点，量高度前必须先还原，
+      // 否则下一帧量到的是「已经截断过的那一行」，永远长不高。
+      let fullText = ''
       let textNode = null
       // Floats on the first line only: wrapped lines then start at the content edge.
       let spacerEl = null
@@ -1958,8 +1966,58 @@ const COVERED_DEBOUNCE_MS = 1200
         const rect = host === null ? null : host.getBoundingClientRect()
         return rect === null ? { left: 0, top: 0 } : { left: rect.left, top: rect.top }
       }
+      const px = (value) => Number.parseFloat(value) || 0
+
+      /**
+       * 让输入框长到装得下灰字：只改 min-height，宿主自己的高度规则不动。
+       * 抬了一次没长（宿主把高度钉死）就不再试，退回按可见框截断。
+       */
+      const growEditor = (wanted) => {
+        if (target === null || target === undefined) return false
+        const want = Math.ceil(wanted)
+        if (!(want > 0)) return false
+        const style = getComputedStyle(target)
+        const box = target.getBoundingClientRect()
+        const chrome = px(style.paddingTop) + px(style.paddingBottom) + px(style.borderTopWidth) + px(style.borderBottomWidth)
+        const have = Math.max(0, box.height - chrome)
+        // 只差几个像素不算「装不下」：这时候去抬 min-height 只会把卡片越撑越大。
+        if (want <= have + 2) {
+          // 只在我们确实撑大过、而且这次真的小了一截时才还回去：否则
+          // 「刚撑到刚好」的下一帧会被判成「不需要撑」，卡片就会来回跳。
+          if (grownFor !== -1 && want < have - 16) {
+            try {
+              target.style.minHeight = restoreMinHeight
+            } catch {}
+            grownFor = -1
+          }
+          return false
+        }
+        if (growBlocked || growBudget <= 0) return false
+        if (grownFor === want) return true
+        const before = box.height
+        try {
+          target.style.minHeight = `${want + chrome}px`
+        } catch {
+          growBlocked = true
+          return false
+        }
+        grownFor = want
+        growBudget -= 1
+        // 差一大截还没长，说明宿主把高度钉死了：这一次以后不再试，退回按可见框截断。
+        if (want - have > 8 && target.getBoundingClientRect().height <= before + 1) {
+          growBlocked = true
+          try {
+            target.style.minHeight = restoreMinHeight
+          } catch {}
+          grownFor = -1
+          return false
+        }
+        return true
+      }
+
       const layoutBox = () => {
         if (target === null || target === undefined) return false
+        restoreFullText()
         const style = getComputedStyle(target)
         const rect = target.getBoundingClientRect()
         const clip = clipBox()
@@ -1976,8 +2034,10 @@ const COVERED_DEBOUNCE_MS = 1200
           style.textAlign,
           limit,
         )
-        fitToHeight(limit)
         copyFont(style)
+        const padBox = px(style.paddingBottom) + px(style.borderBottomWidth)
+        const grewBox = growEditor(top - rect.top + (textEl === null ? 0 : textEl.scrollHeight) + padBox)
+        fitToHeight(grewBox ? limit : Math.max(24, Math.round(clip.bottom - top)))
       }
 
       /**
@@ -2022,6 +2082,7 @@ const COVERED_DEBOUNCE_MS = 1200
 
       const layoutCaret = () => {
         if (target === null || target === undefined) return false
+        restoreFullText()
         const style = getComputedStyle(target)
         const px = (value) => Number.parseFloat(value) || 0
         const box = target.getBoundingClientRect()
@@ -2060,30 +2121,12 @@ const COVERED_DEBOUNCE_MS = 1200
           spacerEl.style.width = `${Math.round(indentWidth)}px`
           spacerEl.style.height = `${Math.round(line)}px`
         }
-        fitToHeight(limit)
         copyFont(style)
-        // 三行以上就垫一块面板：灰字本来就画在页面之上，长尾直接把正文压住太糙。
-        // 面板从第二行开始，第一行留在输入框里，避免盖住用户已经打出来的字。
-        const line = Number.parseFloat(style.lineHeight) || rect.height || 24
-        const height = textEl === null ? 0 : textEl.scrollHeight
-        // 面板必须从「第一行字形的下沿」再往下 2px 开始：这一行常常是用户自己打的
-        // 最后一行（caret 锚点），按行盒 top+lineHeight 算会切掉它的降部（，。gy）。
-        const glyphBottom = Math.round(leading + glyphHeight)
-        if (panelEl !== null) {
-          if (height > line * 1.6) {
-            Object.assign(panelEl.style, {
-              display: '',
-              left: `${Math.round(contentLeft - origin.left - 10)}px`,
-              top: `${Math.round(lineTop + glyphBottom + 2)}px`,
-              width: `${Math.round(blockWidth + 20)}px`,
-              height: `${Math.round(height - glyphBottom - 2 + 10)}px`,
-            })
-            if (host !== null) host.setAttribute('data-mode', 'panel')
-          } else {
-            panelEl.style.display = 'none'
-            if (host !== null) host.setAttribute('data-mode', 'inline')
-          }
-        }
+        // 先把输入框撑到装得下灰字：灰字留在输入区里，不再另铺一层底板。
+        const startTop = lineTop + origin.top
+        const padBottom = px(style.paddingBottom) + px(style.borderBottomWidth)
+        const grew = growEditor(startTop - box.top + (textEl === null ? 0 : textEl.scrollHeight) + padBottom)
+        fitToHeight(grew ? limit : Math.max(24, Math.round(clip.bottom - startTop)))
         return true
       }
 
@@ -2098,6 +2141,12 @@ const COVERED_DEBOUNCE_MS = 1200
         }
       }
 
+      const restoreFullText = () => {
+        if (textNode !== null && fullText !== '' && textNode.nodeValue !== fullText) {
+          textNode.nodeValue = fullText
+        }
+      }
+
       const clear = () => {
         if (liveLayer === token) liveLayer = null
         if (host !== null) {
@@ -2105,7 +2154,11 @@ const COVERED_DEBOUNCE_MS = 1200
           host = null
         }
         textEl = null
-        panelEl = null
+        fullText = ''
+        if (target !== null && target !== undefined && target.style !== undefined) {
+          // 输入框是我们撑高的：还回去，否则空会话会留一张高卡片。
+          target.style.minHeight = restoreMinHeight
+        }
         restorePlaceholder()
         target = null
       }
@@ -2120,6 +2173,10 @@ const COVERED_DEBOUNCE_MS = 1200
         // second dock instance would draw a second ghost: start clean.
         sweepOthers()
         target = editor
+        restoreMinHeight = editor.style.minHeight || ''
+        grownFor = -1
+        growBlocked = false
+        growBudget = 200
         host = document.createElement('div')
         host.setAttribute('data-composer-quill', 'layer')
         host.setAttribute('data-session', ownSession)
@@ -2128,18 +2185,6 @@ const COVERED_DEBOUNCE_MS = 1200
         // no matter how much height the text wanted. A viewport-anchored layer cannot be
         // clipped by an ancestor, and `place()` already works in viewport coordinates.
         host.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;overflow:visible;z-index:2147483000;pointer-events:none;'
-        panelEl = document.createElement('div')
-        panelEl.setAttribute('data-composer-quill', 'panel')
-        panelEl.style.cssText = [
-          'position:absolute',
-          'box-sizing:border-box',
-          'display:none',
-          'border-radius:10px',
-          'background:rgba(255,255,255,.97)',
-          'border:1px solid rgba(17,24,39,.08)',
-          'box-shadow:0 10px 28px rgba(17,24,39,.10)',
-          'pointer-events:none',
-        ].join(';')
         textEl = document.createElement('div')
         textEl.setAttribute('data-composer-quill', 'text')
         spacerEl = document.createElement('i')
@@ -2160,7 +2205,6 @@ const COVERED_DEBOUNCE_MS = 1200
           'overflow:hidden',
           'display:none',
         ].join(';')
-        host.appendChild(panelEl)
         host.appendChild(textEl)
         document.body.appendChild(host)
         return true
@@ -2190,6 +2234,8 @@ const COVERED_DEBOUNCE_MS = 1200
           maxHeight: style === null ? null : style.maxHeight,
           minHeight: (() => { const editor = editorEl(); return editor === null ? null : editor.style.minHeight || '(none)' })(),
           ghostHeight: textEl === null ? null : textEl.scrollHeight,
+          grownTo: (() => { const editor = editorEl(); return editor === null ? null : editor.style.minHeight || '(none)' })(),
+          growBlocked,
           overflow: style === null ? null : style.overflow,
           color: style === null ? null : style.color,
           opacity: style === null ? null : style.opacity,
@@ -2232,6 +2278,12 @@ const COVERED_DEBOUNCE_MS = 1200
         if ((mine !== null && mine.isConnected ? mine : editorEl()) !== target) {
           clear()
           if (!mount()) return
+        }
+        const changed = text !== fullText
+        fullText = text
+        if (changed) {
+          growBlocked = false
+          growBudget = 200
         }
         if (textNode !== null && textNode.nodeValue !== text) textNode.nodeValue = text
         textEl.style.display = ''

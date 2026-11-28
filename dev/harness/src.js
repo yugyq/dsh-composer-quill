@@ -704,32 +704,19 @@ async function main() {
         chip: chip === null ? null : (chip.textContent ?? ''),
         textHeight: text === null ? null : Math.round(text.getBoundingClientRect().height),
         hostParent: host === null || host.parentElement === null ? null : host.parentElement.tagName,
-        mode: host === null ? null : host.getAttribute('data-mode'),
-        panel: (() => {
-          const panel = document.querySelector('[data-composer-quill="panel"]')
-          if (panel === null) return null
-          const rect = panel.getBoundingClientRect()
-          return { shown: getComputedStyle(panel).display !== 'none', h: Math.round(rect.height), w: Math.round(rect.width) }
-        })(),
-        // 面板顶边压进「用户自己打的最后一行」多少像素：必须是 0。
-        coverY: (() => {
-          const panel = document.querySelector('[data-composer-quill="panel"]')
+        // 底板已经去掉：灰字应该靠「输入框自己长高」留在输入区里。
+        panelExists: document.querySelector('[data-composer-quill="panel"]') !== null,
+        // 灰字底边是否还在卡片之内：>= 0 表示在里面，负数表示溢出。
+        insideCard: (() => {
           const editor = document.querySelector('[data-composer-input]')
-          if (panel === null || editor === null) return null
-          const panelRect = panel.getBoundingClientRect()
-          if (panelRect.height === 0) return 0
-          const walk = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
-          let last = null
-          while (walk.nextNode() !== null) last = walk.currentNode
-          if (last === null || last.length === 0) return null
-          const range = document.createRange()
-          range.setStart(last, Math.max(0, last.length - 8))
-          range.setEnd(last, last.length)
-          const rects = Array.from(range.getClientRects())
-          if (rects.length === 0) return null
-          const typed = rects[rects.length - 1]
-          const overlap = Math.min(typed.bottom, panelRect.bottom) - Math.max(typed.top, panelRect.top)
-          return overlap <= 0 ? 0 : Math.round(overlap * 10) / 10
+          if (text === null || card === null || editor === null) return null
+          const textRect = text.getBoundingClientRect()
+          const cardRect = card.getBoundingClientRect()
+          return Math.round(cardRect.bottom - textRect.bottom)
+        })(),
+        editorMinHeight: (() => {
+          const editor = document.querySelector('[data-composer-input]')
+          return editor === null ? null : editor.style.minHeight || '(none)'
         })(),
       }
     },
