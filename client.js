@@ -2455,16 +2455,25 @@ const COVERED_DEBOUNCE_MS = 1200
     const paintedSession = React.useRef(sessionId)
     // A dock that has just mounted is the one on screen: it takes the layer from any
     // dock the host left alive behind it, so a stale Session cannot paint here.
-    React.useEffect(() => {
+    //
+    // Claiming sweeps every layer in the document, including the one this render just
+    // painted, and effects run after render: without the repaint below a switch left the
+    // composer blank until the next keystroke.
+    const claimAndPaint = () => {
       if (typeof ghostLayer.claim === 'function') ghostLayer.claim()
+      if (typeof paintData.paintNow === 'function') paintData.paintNow()
+    }
+    React.useEffect(() => {
+      claimAndPaint()
       return () => { if (typeof ghostLayer.release === 'function') ghostLayer.release() }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ghostLayer])
     React.useEffect(() => {
       if (paintedSession.current !== sessionId) {
         paintedSession.current = sessionId
         // The pane showing this Session is now the one on screen: take the layer
         // ownership away from whichever dock was drawing before it (issue #10).
-        if (typeof ghostLayer.claim === 'function') ghostLayer.claim()
+        claimAndPaint()
         ghostLayer.clear()
         return undefined
       }
