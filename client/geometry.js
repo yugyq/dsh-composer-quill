@@ -44,6 +44,7 @@
         const text = typeof item === 'string' ? item : item?.text
         if (typeof text === 'string' && text !== '') counts.set(text, (counts.get(text) ?? 0) + 1)
       }
+      /** @type {{ text: string, tail: string, score: number } | null} */
       let best = null
       items.forEach((item, index) => {
         const text = typeof item === 'string' ? item : item?.text
@@ -124,6 +125,7 @@
       const rects = probe.getClientRects()
       if (rects.length === 0) return null
       const last = rects[rects.length - 1]
+      if (last === undefined) return null
       return { left: last.right, right: last.right, top: last.top, bottom: last.bottom, width: 0, height: last.height }
     }
 
@@ -133,7 +135,8 @@
       const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT)
       let found = null
       while (walker.nextNode()) {
-        if (walker.currentNode.length > 0) found = walker.currentNode
+        const text = /** @type {Text} */ (walker.currentNode)
+        if (text.length > 0) found = text
       }
       return found
     }
@@ -143,6 +146,13 @@
      * zero-size or line-start rect, so the caret is measured as the right edge
      * of the character before it, which is stable across browsers.
      */
+    /**
+     * A caret or glyph box in viewport coordinates. `fromBlock` marks a caret that
+     * legitimately starts a line (after a trailing <br>).
+     * @typedef {{ left: number, right?: number, top: number, bottom: number, width: number, height: number, fromBlock?: boolean }} CaretRect
+     */
+
+    /** @returns {CaretRect | null} */
     function caretRect() {
       const selection = window.getSelection?.()
       if (selection === null || selection === undefined || selection.rangeCount === 0) return null
@@ -151,7 +161,10 @@
       if (root === null || !root.contains(range.endContainer)) return null
       if (!range.collapsed) {
         const rects = range.getClientRects()
-        return rects.length > 0 ? rects[rects.length - 1] : null
+        const only = rects[rects.length - 1]
+        return only === undefined
+          ? null
+          : { left: only.left, right: only.right, top: only.top, bottom: only.bottom, width: only.width, height: only.height }
       }
       const node = range.endContainer
       const offset = range.endOffset
@@ -167,6 +180,7 @@
         const rects = probe.getClientRects()
         if (rects.length > 0) {
           const last = rects[rects.length - 1]
+          if (last === undefined) return null
           return { left: last.right, right: last.right, top: last.top, bottom: last.bottom, width: 0, height: last.height }
         }
       }
@@ -174,6 +188,7 @@
       if (node.nodeType === Node.ELEMENT_NODE) {
         for (let index = Math.min(offset, node.childNodes.length) - 1; index >= 0; index -= 1) {
           const child = node.childNodes[index]
+          if (child === undefined) continue
           // A <br> between the caret and the previous text means that text sits
           // on an earlier line: stop and anchor to the caret's own (empty) line.
           if (child.nodeName === 'BR') break
@@ -187,8 +202,9 @@
         }
         // Caret after a trailing <br> (Chromium reports no rects at all here):
         // anchor to the empty line at the bottom of the caret's block.
-        const box = node.getBoundingClientRect?.()
-        const lineHeight = Number.parseFloat(getComputedStyle(node).lineHeight) || 0
+        const element = /** @type {Element} */ (node)
+        const box = element.getBoundingClientRect?.()
+        const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight) || 0
         if (box !== undefined && lineHeight > 2 && box.height >= lineHeight * 2) {
           // `fromBlock` marks a caret that legitimately starts a line, so the
           // caller must not "fix" its x with the previous character's edge.
@@ -199,10 +215,10 @@
       const collapsed = range.getClientRects()
       if (collapsed.length > 0) {
         const last = collapsed[collapsed.length - 1]
-        if (last.width > 0 || last.height > 0) return last
+        if (last !== undefined && (last.width > 0 || last.height > 0)) return last
       }
-      if (node.nodeType === Node.ELEMENT_NODE && typeof node.getBoundingClientRect === 'function') {
-        const box = node.getBoundingClientRect()
+      if (node.nodeType === Node.ELEMENT_NODE && typeof /** @type {Element} */ (node).getBoundingClientRect === 'function') {
+        const box = /** @type {Element} */ (node).getBoundingClientRect()
         if (box.width > 0 || box.height > 0) return box
       }
       const box = range.getBoundingClientRect()

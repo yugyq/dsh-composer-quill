@@ -216,6 +216,7 @@ const COVERED_DEBOUNCE_MS = 1200
     function report(event, data) {
       try {
         const capability = token()
+        /** @type {Record<string, string>} */
         const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
         if (capability !== '') headers[TOKEN_HEADER] = capability
         fetch(BEACON, {
@@ -331,7 +332,8 @@ const COVERED_DEBOUNCE_MS = 1200
     /** Headers every request needs, so the two transports cannot drift apart. */
     function requestHeaders(accept) {
       const capability = token()
-      const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
+      /** @type {Record<string, string>} */
+        const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
       if (accept !== undefined) headers.accept = accept
       if (capability !== '') headers[TOKEN_HEADER] = capability
       return headers
@@ -580,7 +582,7 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     const IDLE = Object.freeze({
-      sessionId: null, phase: 'idle', kind: 'next', items: [], index: 0, error: null, forDraft: '', requested: null,
+      sessionId: null, phase: 'idle', kind: 'next', items: [], index: 0, error: null, request: null, itemsRequest: null,
     })
 
     /**
@@ -630,7 +632,8 @@ const COVERED_DEBOUNCE_MS = 1200
           && stored !== null
           && stored.sessionId === live.sessionId
           && stored.kind === 'compose'
-          && stored.forDraft === draftNow
+          && stored.request !== null
+          && stored.request !== null && stored.request !== undefined && stored.request.draft === draftNow
           && (stored.phase === 'ready' || stored.phase === 'empty')) {
           effects.push({ type: 'report', name: 'reuse', detail: stored.phase })
           effects.push({ type: 'mark-last-call' })
@@ -648,7 +651,7 @@ const COVERED_DEBOUNCE_MS = 1200
         if (draftNow.trim().length < MIN_DRAFT_CHARS) return stop('G5b')
         if (input?.dismissed != null && input.dismissed === draftNow) return stop('G5c')
         const stored = input?.stored ?? null
-        if (stored !== null && stored.phase === 'loading' && inFlightCovers(stored.requested, draftNow)) {
+        if (stored !== null && stored.phase === 'loading' && stored.request !== null && stored.request !== undefined && inFlightCovers(stored.request.draft, draftNow)) {
           effects.push({ type: 'report', name: 'reuse', detail: 'in-flight' })
           return stop('G6')
         }
@@ -776,6 +779,10 @@ const COVERED_DEBOUNCE_MS = 1200
     function createGhostStore() {
       const store = createSnapshotStore(IDLE)
       let controller = null
+      // Which request the controller above belongs to. A controller outlives a
+      // session switch, so "is this still the current request" must be asked of the
+      // snapshot, not of the variable.
+      let controllerId = null
       let acc = ''
       let streamMode = 'full'
       // After a few suggestions ignored in a row, the rewrite is the expensive kind
@@ -800,37 +807,72 @@ const COVERED_DEBOUNCE_MS = 1200
       // The draft this stream was requested for. A retained proposal may belong
       // to an older draft, so the base must come from the request, not the store.
       let streamBase = ''
-      // Which Session opened this stream. A frame that arrives after the user moved to
-      // another Session belongs to the one that asked for it — writing it into the
-      // current snapshot turns the previous Session's answer into this one's.
-      let streamSession = null
-      // A late frame is dropped, not applied to whoever is on screen now.
-      const late = () => streamSession !== null && store.getSnapshot().sessionId !== streamSession
-  // Every frame carries the session it was requested for. A stream outlives a
-  // session switch; without this the frames of the old one land in the new one.
-  // A frame that no longer belongs here is dropped; counting it turns a silent
-  // race into something the log can show.
-  let droppedFrames = 0
-  const belongs = (fromSession) => {
-    if (fromSession === undefined) return true
-    if (store.getSnapshot().sessionId === fromSession) return true
-    droppedFrames += 1
-    return false
-  }
+      // Every request gets a number, and every write has to quote it. Two keystrokes
+      // and two answers used to be distinguishable only by draft text, which is the
+      // same string in all the interesting races.
+      let requestEpoch = 0
+      // Frames that arrived for a request the user had already moved past. Counting
+      // them turns a silent race into something the log can show.
+      let droppedFrames = 0
+
+      /**
+       * The identity of one question: which Session, which draft, which attachment,
+       * which attempt. `epoch` is local and monotonic; the Host's cache epoch is a
+       * separate thing and never reaches this store.
+       */
+      const newRequest = (sessionId, draft, attachmentKey) => {
+        requestEpoch += 1
+        return {
+          sessionId: typeof sessionId === 'string' ? sessionId : '',
+          draft: typeof draft === 'string' ? draft : '',
+          attachmentKey: typeof attachmentKey === 'string' ? attachmentKey : '',
+          epoch: requestEpoch,
+        }
+      }
+
+      // The ONE writer. Every state change names the request it belongs to, and
+      // `sessionId` is a denormalised copy of that identity -- nothing else may
+      // assign it. Starting a request is always allowed (that is the whole point of
+      // switching identity); a FRAME from an older request is not, and goes through
+      // frame() below instead of re-checking the same condition at eight call sites.
+      const commit = (id, patch) => {
+        const current = store.getSnapshot()
+        store.set({
+          ...current,
+          ...patch,
+          request: id,
+          sessionId: id === null ? null : id.sessionId,
+        })
+        return true
+      }
+
+      /** Write a frame only if it still belongs to the request on screen. */
+      const frame = (id, patch) => {
+        if (id === undefined || store.getSnapshot().request !== id) {
+          droppedFrames += 1
+          return false
+        }
+        return commit(id, patch)
+      }
+
       const cancel = () => {
+        const cancelled = controllerId
         if (controller !== null) {
           controller.abort()
           controller = null
         }
+        controllerId = null
         // Without this the dock keeps showing "补写中…" after a cancel (switching
         // Sessions, starting a turn) and nothing ever clears it.
         const current = store.getSnapshot()
-        if (current.phase === 'loading') store.set({ ...current, phase: 'idle', requested: null })
+        if (current.phase === 'loading' && current.request === cancelled) commit(null, { phase: 'idle' })
       }
       const proposalOf = () => (streamMode === 'append' ? `${streamBase.replace(/\s+$/, '')}${acc}` : acc)
       return {
         getSnapshot: store.getSnapshot,
         subscribe: store.subscribe,
+        /** The identity of the question about to be asked. */
+        newRequest,
         setSuppressRewrites: (flag) => {
           allowSuppress = flag !== false
           recomputeSuppress()
@@ -851,15 +893,15 @@ const COVERED_DEBOUNCE_MS = 1200
           ignoredStreak = 0
           recomputeSuppress()
         },
-        /** True once, if the last finished stream was withheld on purpose. */
         /** What the suppression rule is currently doing, for the dock-state beacon. */
         suppressState: () => ({ on: suppressRewrites, streak: ignoredStreak, allow: allowSuppress }),
+        /** True once, if the last finished stream was withheld on purpose. */
         takeSuppressed: () => {
           const was = lastSuppressed
           lastSuppressed = false
           return was
         },
-        /** How many frames were dropped because their session had moved on. */
+        /** How many frames were dropped because their request was no longer live. */
         streamDropped: () => droppedFrames,
         cancel: () => {
           cancel()
@@ -868,19 +910,17 @@ const COVERED_DEBOUNCE_MS = 1200
           acc = ''
           streamMode = 'full'
           streamBase = ''
-          store.set(IDLE)
+          commit(null, { phase: 'idle', items: [], index: 0, error: null, itemsRequest: null })
         },
         /** Streaming compose: same snapshot shape, filled in as deltas arrive. */
-        streamStart: (sessionId, kind, forDraft) => {
+        streamStart: (request, kind) => {
           cancel()
           streaming = true
-          // Identity of the request, not of the snapshot. A stream outlives a session
-          // switch, and every frame below must be able to tell whose answer it is.
-          streamSession = sessionId
           controller = new AbortController()
+          controllerId = request
           acc = ''
           streamMode = 'full'
-          streamBase = forDraft
+          streamBase = request.draft
           lastSuppressed = false
           // A compose answer may still turn out to be a rewrite, so nothing is
           // painted until the `start` frame says which case it is.
@@ -889,18 +929,16 @@ const COVERED_DEBOUNCE_MS = 1200
           // Keep the proposal that is already on screen; the first delta of this
           // request replaces it. Otherwise every keystroke blanks the composer.
           const keep = !holding
-            && previous.sessionId === sessionId
+            && previous.sessionId === request.sessionId
             && previous.kind === kind
             && previous.items.length > 0
-          store.set({
-            sessionId,
+          commit(request, {
             phase: 'loading',
             kind,
             items: keep ? previous.items : [],
+            itemsRequest: keep ? (previous.itemsRequest ?? previous.request) : null,
             index: keep ? Math.min(previous.index, previous.items.length - 1) : 0,
             error: null,
-            forDraft: keep ? previous.forDraft : forDraft,
-            requested: forDraft,
           })
           return controller
         },
@@ -911,35 +949,35 @@ const COVERED_DEBOUNCE_MS = 1200
           // that follow paint as usual.
           if (mode === 'append') holding = false
         },
-        streamRetract: (mode, fromSession) => {
-          if (!belongs(fromSession) || late()) return
+        streamRetract: (mode, request) => {
+          if (store.getSnapshot().request !== request) {
+            frame(request, {})
+            return
+          }
           acc = ''
           streamMode = mode === 'append' ? 'append' : 'full'
           if (streamMode === 'append') holding = false
-          const current = store.getSnapshot()
-          store.set({ ...current, items: [] })
+          frame(request, { items: [], itemsRequest: null })
         },
-        streamDelta: (text, fromSession) => {
+        streamDelta: (text, request) => {
           if (typeof text !== 'string' || text === '') return
-          if (!belongs(fromSession) || late()) return
+          if (store.getSnapshot().request !== request) {
+            frame(request, {})
+            return
+          }
           acc += text
           // Withheld: keep the scratch text, leave the composer alone.
           if (holding) return
-          const current = store.getSnapshot()
           // The store may still carry the proposal of an older draft (retention):
           // this result belongs to the draft the stream was requested for.
-          store.set({
-            sessionId: streamSession,
-            ...current,
-            phase: 'ready',
-            items: [proposalOf()],
-            forDraft: current.requested ?? current.forDraft,
-          })
+          frame(request, { phase: 'ready', items: [proposalOf()], itemsRequest: request })
         },
-        streamFinal: (text, mode, fromSession) => {
-          if (!belongs(fromSession) || late()) return
+        streamFinal: (text, mode, request) => {
+          if (store.getSnapshot().request !== request) {
+            frame(request, {})
+            return
+          }
           streaming = false
-          const current = store.getSnapshot()
           if (mode === 'append' || mode === 'full') streamMode = mode
           if (holding && streamMode === 'full') {
             // Suppressed rewrite: better silent than covering the draft the user is
@@ -947,7 +985,7 @@ const COVERED_DEBOUNCE_MS = 1200
             holding = false
             lastSuppressed = true
             acc = ''
-            store.set({ sessionId: streamSession, ...current, phase: 'empty', items: [], requested: null, forDraft: current.requested ?? current.forDraft })
+            frame(request, { phase: 'empty', items: [], itemsRequest: null })
             return
           }
           holding = false
@@ -959,38 +997,42 @@ const COVERED_DEBOUNCE_MS = 1200
               ? text.slice(base.length)
               : text
           }
-          store.set({ sessionId: streamSession, ...current, phase: 'ready', items: [proposalOf()], forDraft: current.requested ?? current.forDraft })
+          frame(request, { phase: 'ready', items: [proposalOf()], itemsRequest: request })
         },
-        streamDone: (meta, fromSession) => {
-          if (!belongs(fromSession) || late()) return
+        streamDone: (meta, request) => {
+          if (store.getSnapshot().request !== request) {
+            frame(request, {})
+            return
+          }
           streaming = false
           controller = null
+          controllerId = null
           const current = store.getSnapshot()
           const items = usableItems(current.items)
           const unchanged = meta !== null && typeof meta === 'object' && meta.reason === 'unchanged'
           // An error for this draft outranks a later "nothing to add": the user asked
           // once, it failed, and a quiet empty answer must not erase that fact.
           if (unchanged && current.phase === 'error') return
-          store.set({
-            sessionId: streamSession,
-            ...current,
+          frame(request, {
             phase: unchanged || items.length === 0 ? 'empty' : 'ready',
             // The Host said "nothing to change" for this draft: keeping the older
             // proposal would offer a suggestion it just rejected.
             items: unchanged ? [] : items,
+            itemsRequest: unchanged ? null : request,
             error: null,
-            requested: null,
-            forDraft: current.requested ?? current.forDraft,
           })
         },
-        streamFail: (message, fromSession) => {
-          if (!belongs(fromSession) || late()) return
+        streamFail: (message, request) => {
+          if (store.getSnapshot().request !== request) {
+            frame(request, {})
+            return
+          }
           streaming = false
           controller = null
-          const current = store.getSnapshot()
-          // Keep the retry budget pointed at the right draft: forDraft must follow
-          // this request, or the one-retry-per-draft guard never matches.
-          store.set({ sessionId: streamSession, ...current, phase: 'error', items: [], error: message, requested: null, forDraft: current.requested ?? current.forDraft })
+          controllerId = null
+          // The identity is what keeps the retry budget pointed at the right draft:
+          // a failure for an older request cannot overwrite this one's state.
+          frame(request, { phase: 'error', items: [], error: message, itemsRequest: null })
         },
         clear: (sessionId) => {
           const current = store.getSnapshot()
@@ -1001,92 +1043,79 @@ const COVERED_DEBOUNCE_MS = 1200
           acc = ''
           streamMode = 'full'
           streamBase = ''
-          store.set(IDLE)
+          commit(null, { phase: 'idle', kind: 'next', items: [], index: 0, error: null, itemsRequest: null })
         },
         /**
          * Show a suggestion that was computed earlier (from localStorage) without
          * asking the Host again. A live result always wins over a stored one.
          */
-        hydrate: (sessionId, kind, forDraft, items) => {
+        hydrate: (request, kind, items) => {
           if (!Array.isArray(items) || items.length === 0) return false
           // A stored compose answer may be a rewrite and carries no mode: while
           // suppressed, keep the store quiet and let a live request decide.
           if (suppressRewrites && kind === 'compose') return false
           const current = store.getSnapshot()
-          if (current.sessionId === sessionId && current.items.length > 0) return false
-          if (current.sessionId === sessionId && current.phase === 'loading') return false
-          store.set({
-            sessionId,
-            phase: 'ready',
-            kind,
-            items,
-            index: 0,
-            error: null,
-            forDraft,
-            requested: null,
-          })
+          if (current.sessionId === request.sessionId && current.items.length > 0) return false
+          if (current.sessionId === request.sessionId && current.phase === 'loading') return false
+          commit(request, { phase: 'ready', kind, items, index: 0, error: null })
           return true
         },
         cycle: (step) => {
           const current = store.getSnapshot()
           const total = current.items.length
           if (total < 2) return
-          store.set({ ...current, index: (current.index + step + total) % total })
+          commit(current.request, { index: (current.index + step + total) % total })
         },
         /**
          * Mark a request as started at schedule time (before the debounce fires)
          * so the UI can show a busy affordance immediately, while keeping the
          * proposal that is already on screen.
          */
-        begin: (sessionId, kind, forDraft) => {
+        begin: (request, kind) => {
           cancel()
           controller = new AbortController()
+          controllerId = request
           const previous = store.getSnapshot()
           // Keep the proposal that is already on screen: a new request must not
-          // blank the composer for a second. The retained proposal keeps its own
-          // `forDraft`, so the prefix arithmetic still matches what it was built
-          // from, and a rewrite for an older draft stays hidden by its guard.
-          const keep = previous.sessionId === sessionId
+          // blank the composer for a second. A retained proposal keeps its own
+          // identity, so the prefix arithmetic still matches what it was built from.
+          const keep = previous.sessionId === request.sessionId
             && previous.kind === kind
             && previous.items.length > 0
-          store.set({
-            sessionId,
+          commit(request, {
             phase: 'loading',
             kind,
             items: keep ? previous.items : [],
+            itemsRequest: keep ? (previous.itemsRequest ?? previous.request) : null,
             index: keep ? Math.min(previous.index, previous.items.length - 1) : 0,
             error: null,
-            forDraft: keep ? previous.forDraft : forDraft,
-            requested: forDraft,
           })
           return controller
         },
-        settle: (sessionId, active, kind, forDraft, rawItems) => {
+        settle: (request, active, kind, rawItems) => {
           if (controller !== active || active.signal.aborted) return
           controller = null
+          controllerId = null
           // The streaming path already drops anything that is not a non-empty string;
           // a malformed JSON answer used to reach the renderer instead.
           const items = usableItems(rawItems)
-          store.set({
-            sessionId,
+          commit(request, {
             // 'empty' is a settled answer ("nothing to add"), not a pending state.
             phase: items.length === 0 ? 'empty' : 'ready',
             kind,
             items,
             index: 0,
             error: null,
-            forDraft,
-            requested: null,
           })
         },
-        fail: (sessionId, active, kind, forDraft, message) => {
+        fail: (request, active, kind, message) => {
           if (controller !== active || active.signal.aborted) return
           controller = null
-          store.set({ sessionId, phase: 'error', kind, items: [], index: 0, error: message, forDraft, requested: null })
+          controllerId = null
+          commit(request, { phase: 'error', kind, items: [], index: 0, error: message, itemsRequest: null })
         },
       }
     }
-
 // --- config.js — concatenated into client.js by dev/tools/build-client.mjs ---
     const CONFIG_KEY = 'dsh.composer-quill.config'
     const LEGACY_KEY = 'dsh.composer-quill.enabled'
@@ -1229,7 +1258,7 @@ const COVERED_DEBOUNCE_MS = 1200
      * computed in. Bumping the epoch on every finished turn means nothing survives
      * a turn, so an answer about an older topic can never come back.
      */
-    function suggestionKey(sessionId, kind, draft, epoch = '') {
+    function suggestionKey(sessionId, kind, draft, epoch = 0) {
       return `${sessionId ?? ''}|${kind}|${draft ?? ''}|${epoch}`
     }
 
@@ -1416,6 +1445,7 @@ const COVERED_DEBOUNCE_MS = 1200
       return turnEpoch.current
     }
 
+    /** @type {{ raw: string | null, data: Record<string, any> }} */
     let learnMemo = { raw: null, data: {} }
 
     function readLearning() {
@@ -1539,6 +1569,7 @@ const COVERED_DEBOUNCE_MS = 1200
         const text = typeof item === 'string' ? item : item?.text
         if (typeof text === 'string' && text !== '') counts.set(text, (counts.get(text) ?? 0) + 1)
       }
+      /** @type {{ text: string, tail: string, score: number } | null} */
       let best = null
       items.forEach((item, index) => {
         const text = typeof item === 'string' ? item : item?.text
@@ -1619,6 +1650,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const rects = probe.getClientRects()
       if (rects.length === 0) return null
       const last = rects[rects.length - 1]
+      if (last === undefined) return null
       return { left: last.right, right: last.right, top: last.top, bottom: last.bottom, width: 0, height: last.height }
     }
 
@@ -1628,7 +1660,8 @@ const COVERED_DEBOUNCE_MS = 1200
       const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT)
       let found = null
       while (walker.nextNode()) {
-        if (walker.currentNode.length > 0) found = walker.currentNode
+        const text = /** @type {Text} */ (walker.currentNode)
+        if (text.length > 0) found = text
       }
       return found
     }
@@ -1638,6 +1671,13 @@ const COVERED_DEBOUNCE_MS = 1200
      * zero-size or line-start rect, so the caret is measured as the right edge
      * of the character before it, which is stable across browsers.
      */
+    /**
+     * A caret or glyph box in viewport coordinates. `fromBlock` marks a caret that
+     * legitimately starts a line (after a trailing <br>).
+     * @typedef {{ left: number, right?: number, top: number, bottom: number, width: number, height: number, fromBlock?: boolean }} CaretRect
+     */
+
+    /** @returns {CaretRect | null} */
     function caretRect() {
       const selection = window.getSelection?.()
       if (selection === null || selection === undefined || selection.rangeCount === 0) return null
@@ -1646,7 +1686,10 @@ const COVERED_DEBOUNCE_MS = 1200
       if (root === null || !root.contains(range.endContainer)) return null
       if (!range.collapsed) {
         const rects = range.getClientRects()
-        return rects.length > 0 ? rects[rects.length - 1] : null
+        const only = rects[rects.length - 1]
+        return only === undefined
+          ? null
+          : { left: only.left, right: only.right, top: only.top, bottom: only.bottom, width: only.width, height: only.height }
       }
       const node = range.endContainer
       const offset = range.endOffset
@@ -1662,6 +1705,7 @@ const COVERED_DEBOUNCE_MS = 1200
         const rects = probe.getClientRects()
         if (rects.length > 0) {
           const last = rects[rects.length - 1]
+          if (last === undefined) return null
           return { left: last.right, right: last.right, top: last.top, bottom: last.bottom, width: 0, height: last.height }
         }
       }
@@ -1669,6 +1713,7 @@ const COVERED_DEBOUNCE_MS = 1200
       if (node.nodeType === Node.ELEMENT_NODE) {
         for (let index = Math.min(offset, node.childNodes.length) - 1; index >= 0; index -= 1) {
           const child = node.childNodes[index]
+          if (child === undefined) continue
           // A <br> between the caret and the previous text means that text sits
           // on an earlier line: stop and anchor to the caret's own (empty) line.
           if (child.nodeName === 'BR') break
@@ -1682,8 +1727,9 @@ const COVERED_DEBOUNCE_MS = 1200
         }
         // Caret after a trailing <br> (Chromium reports no rects at all here):
         // anchor to the empty line at the bottom of the caret's block.
-        const box = node.getBoundingClientRect?.()
-        const lineHeight = Number.parseFloat(getComputedStyle(node).lineHeight) || 0
+        const element = /** @type {Element} */ (node)
+        const box = element.getBoundingClientRect?.()
+        const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight) || 0
         if (box !== undefined && lineHeight > 2 && box.height >= lineHeight * 2) {
           // `fromBlock` marks a caret that legitimately starts a line, so the
           // caller must not "fix" its x with the previous character's edge.
@@ -1694,10 +1740,10 @@ const COVERED_DEBOUNCE_MS = 1200
       const collapsed = range.getClientRects()
       if (collapsed.length > 0) {
         const last = collapsed[collapsed.length - 1]
-        if (last.width > 0 || last.height > 0) return last
+        if (last !== undefined && (last.width > 0 || last.height > 0)) return last
       }
-      if (node.nodeType === Node.ELEMENT_NODE && typeof node.getBoundingClientRect === 'function') {
-        const box = node.getBoundingClientRect()
+      if (node.nodeType === Node.ELEMENT_NODE && typeof /** @type {Element} */ (node).getBoundingClientRect === 'function') {
+        const box = /** @type {Element} */ (node).getBoundingClientRect()
         if (box.width > 0 || box.height > 0) return box
       }
       const box = range.getBoundingClientRect()
@@ -1780,8 +1826,9 @@ const COVERED_DEBOUNCE_MS = 1200
         if (next !== placeholderEl) {
           restorePlaceholder()
           placeholderEl = next
-          placeholderDisplay = next.style.display
-          next.style.display = 'none'
+          const placeholder = /** @type {HTMLElement} */ (next)
+          placeholderDisplay = placeholder.style.display
+          placeholder.style.display = 'none'
         }
       }
 
@@ -1797,6 +1844,14 @@ const COVERED_DEBOUNCE_MS = 1200
         })
       }
 
+      /**
+       * @param {number} left
+       * @param {number} top
+       * @param {number | null} width
+       * @param {number | null} maxWidth
+       * @param {string} align
+       * @param {number | null} [maxHeight]
+       */
       const place = (left, top, width, maxWidth, align, maxHeight = null) => {
         Object.assign(textEl.style, {
           // Sub-pixel precision: the origin is fractional, so rounding adds up.
@@ -2239,7 +2294,7 @@ const COVERED_DEBOUNCE_MS = 1200
             kind: input.state.kind,
             items: input.state.items.length,
             index: input.state.index,
-            forDraftLength: typeof input.state.forDraft === "string" ? input.state.forDraft.length : null,
+            forDraftLength: input.state.request !== null && input.state.request !== undefined ? input.state.request.draft.length : null,
             nextActive: input.nextActive,
             composeActive: input.composeActive,
             pendingCompose: input.pendingCompose,
@@ -2579,7 +2634,8 @@ const COVERED_DEBOUNCE_MS = 1200
       // so the ghost starts growing immediately. Split out of request().
       const composeStream = React.useCallback((live, draftNow) => {
           lastRequested.current = requestSignature(draftNow, live.attachmentKey)
-          const active = ghost.streamStart(live.sessionId, 'compose', draftNow)
+          const request = ghost.newRequest(live.sessionId, draftNow, live.attachmentKey)
+          const active = ghost.streamStart(request, 'compose')
           let idle = null
           let buffer = ''
           let frame = null
@@ -2592,7 +2648,7 @@ const COVERED_DEBOUNCE_MS = 1200
             if (buffer !== '') {
               const text = buffer
               buffer = ''
-              ghost.streamDelta(text, live.sessionId)
+              ghost.streamDelta(text, request)
             }
           }
           const queue = (text) => {
@@ -2606,7 +2662,7 @@ const COVERED_DEBOUNCE_MS = 1200
             if (idle !== null) clearTimeout(idle)
             idle = setTimeout(() => {
               active.abort()
-              ghost.streamFail('timed out', live.sessionId)
+              ghost.streamFail('timed out', request)
             }, live.timeoutMs || CLIENT_TIMEOUT_MS)
           }
           bump()
@@ -2619,7 +2675,7 @@ const COVERED_DEBOUNCE_MS = 1200
             retract: (data) => {
               bump()
               flush()
-              ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full', live.sessionId)
+              ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full', request)
             },
             delta: (data) => {
               bump()
@@ -2628,28 +2684,29 @@ const COVERED_DEBOUNCE_MS = 1200
             final: (data) => {
               bump()
               flush()
-              if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode, live.sessionId)
+              if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode, request)
               if (ghost.takeSuppressed?.() === true) report('suppressed', { sessionId: live.sessionId, detail: 'rewrite' })
             },
             done: (data) => {
               flush()
               markLive()
-              ghost.streamDone(data ?? {}, live.sessionId)
+              ghost.streamDone(data ?? {}, request)
               // Most compose suggestions arrive over SSE: persist them too, or
               // only the JSON fallback would ever be reused.
               const settled = ghost.getSnapshot()
               if (settled.kind === 'compose' && settled.items.length > 0) {
-                saveSuggestion(settled.sessionId, 'compose', settled.forDraft, settled.items, `${historyRef.current.items.length}`, settled.mode)
+                const settledDraft = settled.request !== null && settled.request !== undefined ? settled.request.draft : ''
+                saveSuggestion(settled.sessionId, 'compose', settledDraft, settled.items, `${historyRef.current.items.length}`, settled.mode)
               }
             },
             error: (data) => {
               const message = typeof data?.message === 'string' ? data.message : 'stream failed'
-              ghost.streamFail(message, live.sessionId)
+              ghost.streamFail(message, request)
               report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
             },
             json: (body) => {
               const items = rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
-              ghost.settle(live.sessionId, active, 'compose', draftNow, items)
+              ghost.settle(request, active, 'compose', items)
               saveSuggestion(live.sessionId, 'compose', draftNow, items, `${historyRef.current.items.length}`, typeof body?.mode === 'string' ? body.mode : '')
             },
           }).catch((error) => {
@@ -2662,7 +2719,7 @@ const COVERED_DEBOUNCE_MS = 1200
               return
             }
             const message = error instanceof Error ? error.message : String(error)
-            ghost.streamFail(message, live.sessionId)
+            ghost.streamFail(message, request)
             report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
           }).finally(() => {
             if (idle !== null) clearTimeout(idle)
@@ -2677,10 +2734,11 @@ const COVERED_DEBOUNCE_MS = 1200
   
       // The JSON path: one call, one settled answer. Split out of request().
       const nextJson = React.useCallback((live, draftNow, mode, kind) => {
-        const active = ghost.begin(live.sessionId, kind, draftNow)
+        const request = ghost.newRequest(live.sessionId, draftNow, live.attachmentKey)
+        const active = ghost.begin(request, kind)
         const deadline = setTimeout(() => {
           active.abort()
-          ghost.fail(live.sessionId, active, kind, draftNow, 'timed out')
+          ghost.fail(request, active, kind, 'timed out')
         }, live.timeoutMs || CLIENT_TIMEOUT_MS)
         active.signal.addEventListener('abort', () => clearTimeout(deadline), { once: true })
         Promise.resolve()
@@ -2699,7 +2757,7 @@ const COVERED_DEBOUNCE_MS = 1200
               clearSessionSuggestions(live.sessionId)
               markNoSuggestion(live.sessionId, kind, draftNow)
             }
-            ghost.settle(live.sessionId, active, kind, draftNow, items)
+            ghost.settle(request, active, kind, items)
             saveSuggestion(live.sessionId, kind, draftNow, items, `${historyRef.current.items.length}`, kind === 'next' ? 'full' : '')
           }, (error) => {
             if (active.signal.aborted) return
@@ -2710,7 +2768,7 @@ const COVERED_DEBOUNCE_MS = 1200
               return
             }
             const message = error instanceof Error ? error.message : String(error)
-            ghost.fail(live.sessionId, active, kind, draftNow, message)
+            ghost.fail(request, active, kind, message)
             report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: `${mode}: ${message}`.slice(0, 300) })
             try { console.warn('[composer-quill] request failed:', mode, message) } catch { /* no console */ }
           })
@@ -2755,9 +2813,8 @@ const COVERED_DEBOUNCE_MS = 1200
             stored: {
               sessionId: stored.sessionId,
               kind: stored.kind,
-              forDraft: stored.forDraft,
+              request: stored.request,
               phase: stored.phase,
-              requested: stored.requested,
             },
             dismissed: dockBooking.current.dismissed,
             attachmentKey: live.attachmentKey ?? '',
@@ -2798,7 +2855,8 @@ const COVERED_DEBOUNCE_MS = 1200
       React.useEffect(() => {
         if (!composeEnabled || running || sessionId === null) return undefined
         if (state.phase !== 'error' || state.kind !== 'compose') return undefined
-        if (state.forDraft !== draft || retriedFor.current === draft) return undefined
+        const failedFor = state.request !== null && state.request !== undefined ? state.request.draft : ''
+        if (failedFor !== draft || retriedFor.current === draft) return undefined
         retriedFor.current = draft
         // The timer lives in a ref: a deps change (the store moving, the draft
         // growing) must not silently swallow the one retry this draft gets.
@@ -2813,7 +2871,7 @@ const COVERED_DEBOUNCE_MS = 1200
             retryTimer.current = null
           }
         }
-      }, [state.phase, state.kind, state.forDraft, draft, enabled, running, sessionId, request])
+      }, [state.phase, state.kind, state.request, draft, enabled, running, sessionId, request])
       React.useEffect(() => () => {
         stopTimer()
         if (retryTimer.current !== null) clearTimeout(retryTimer.current)
@@ -2845,7 +2903,8 @@ const COVERED_DEBOUNCE_MS = 1200
             if (requestSignature(text, live.attachmentKey) === lastRequested.current) return
             if (dockBooking.current.dismissed === text) return
             const pending = ghost.getSnapshot()
-            if (pending.phase !== 'idle' && pending.forDraft === text) return
+            const pendingDraft = pending.request !== null && pending.request !== undefined ? pending.request.draft : ''
+            if (pending.phase !== 'idle' && pendingDraft === text) return
             // The draft still sits inside the proposal on screen: the draft effect has
             // already scheduled a debounced request for it, so the safety net must not
             // fire an immediate second one (S18 measured that as a wasted call).
@@ -3028,10 +3087,16 @@ const COVERED_DEBOUNCE_MS = 1200
           const storedText = stored.sessionId === sessionId && stored.kind === 'compose' && stored.items.length > 0
             ? stored.items[stored.index] ?? ''
             : ''
+          // Candidates cover the draft that produced them; a store that has moved
+          // on to a longer draft still holds the older ones.
+          const itemsFrom = stored.itemsRequest !== null && stored.itemsRequest !== undefined
+            ? stored.itemsRequest
+            : (stored.request !== null && stored.request !== undefined ? stored.request : null)
+          const storedDraft = itemsFrom !== null ? itemsFrom.draft : ''
           const covered = sameAttachments
             && storedText !== ''
-            && stored.forDraft !== draft
-            && draft.replace(/\s+$/, '').startsWith(stored.forDraft.replace(/\s+$/, ''))
+            && storedDraft !== draft
+            && draft.replace(/\s+$/, '').startsWith(storedDraft.replace(/\s+$/, ''))
             && followRemainder(storedText, draft.replace(/\s+$/, '')) !== ''
           if (covered && dockBooking.current.covered !== draft) {
             sendDock({ type: 'covered', draft })
@@ -3109,7 +3174,7 @@ const COVERED_DEBOUNCE_MS = 1200
         if (hydratedFor.current === marker) return false
         const items = loadSuggestion(sessionId, kind, forDraft)
         if (items === null || items.length === 0) return false
-        const shown = ghost.hydrate(sessionId, kind, forDraft, items)
+        const shown = ghost.hydrate(ghost.newRequest(sessionId, forDraft, ''), kind, items)
         // Only a suggestion that reached the screen may claim the marker: a
         // rejected hydrate (live result, in-flight request) must stay retryable.
         if (shown) {
@@ -3262,7 +3327,14 @@ const COVERED_DEBOUNCE_MS = 1200
       // follows it the two disagree for a frame, and trimming against the older
       // one paints the character the user just typed a second time.
       const remainder = followRemainder(composed, liveText.replace(/\s+$/, ''))
-      const fresh = state.forDraft === draft || state.forDraft === draftBase
+      // The draft these candidates answer is the one that produced them — not the
+      // request currently in flight. While a longer draft is being answered the
+      // store keeps the older candidates, and they belong to the older draft.
+      const itemsFrom = state.itemsRequest !== null && state.itemsRequest !== undefined
+        ? state.itemsRequest
+        : (state.request !== null && state.request !== undefined ? state.request : null)
+      const forDraft = itemsFrom !== null ? itemsFrom.draft : ''
+      const fresh = forDraft === draft || forDraft === draftBase
       const alreadyInEditor = proposalIsStale(current, liveText)
       // The candidates belong to the Session that asked for them: after a switch the
       // store still holds the previous one's, and an empty composer makes every other
@@ -3288,7 +3360,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const historyMatch = enabled && !running && !nextActive && !composeActive
         && history.sessionId === sessionId
         && dockBooking.current.dismissed !== draft && dockBooking.current.dismissed !== draftBase
-        ? bestHistoryMatch(history.items, draftBase)
+        ? /** @type {{ tail: string } | null} */ (bestHistoryMatch(history.items, draftBase))
         : null
       const historyActive = historyMatch !== null
       const visible = nextActive || composeActive || historyActive
@@ -3297,7 +3369,7 @@ const COVERED_DEBOUNCE_MS = 1200
         ? current
         : composeActive
           ? (remainder !== '' ? remainder : composed)
-          : historyActive ? historyMatch.tail : ''
+          : historyMatch !== null ? historyMatch.tail : ''
       const proposalIsTail = nextActive ? false : composeActive ? remainder !== '' : historyActive
       const hintKey = nextActive
         ? 'hint.accept'
@@ -3388,11 +3460,11 @@ const COVERED_DEBOUNCE_MS = 1200
         const [showEmpty, setShowEmpty] = React.useState(false)
         React.useEffect(() => {
           if (state.phase !== 'empty' || state.sessionId !== sessionId) { setShowEmpty(false); return undefined }
-          if (state.forDraft !== draftBase && state.forDraft !== draft) { setShowEmpty(false); return undefined }
+          if (forDraft !== draftBase && forDraft !== draft) { setShowEmpty(false); return undefined }
           setShowEmpty(true)
           const timer = setTimeout(() => setShowEmpty(false), 2500)
           return () => clearTimeout(timer)
-        }, [state.phase, state.sessionId, state.forDraft, sessionId, draft, draftBase])
+        }, [state.phase, state.sessionId, forDraft, sessionId, draft, draftBase])
 
         // The offer is short-lived: eight seconds, or until the draft moves on.
         React.useEffect(() => {
@@ -3455,7 +3527,7 @@ const COVERED_DEBOUNCE_MS = 1200
         proposal,
         current,
         kind: state.kind,
-        forDraft: state.forDraft,
+        forDraft,
         fullText: composed,
         draftLength: draft.length,
         sessionId,
@@ -3473,7 +3545,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const statusText = nextActive ? current : (composeActive || historyActive) ? proposal : ''
       // A failure used to be invisible: the store recorded it and nothing rendered it.
       const failureText = state.phase === 'error' && typeof state.error === 'string' && state.error !== ''
-        && (state.forDraft === draftBase || state.forDraft === draft)
+        && (forDraft === draftBase || forDraft === draft)
         ? state.error
         : ''
       // "Composing…" covers the whole wait for a usable proposal — including the
@@ -3481,7 +3553,7 @@ const COVERED_DEBOUNCE_MS = 1200
       // draft. It stops as soon as this exact draft has a settled answer
       // (a proposal, "nothing to add", or a failure).
       const answeredForThisDraft = (state.phase === 'empty' || state.phase === 'error' || state.phase === 'ready')
-        && (state.forDraft === draftBase || state.forDraft === draft)
+        && (forDraft === draftBase || forDraft === draft)
       const pendingCompose = composeEnabled && !running && statusText === ''
         && sessionId !== null
         && state.sessionId === sessionId
@@ -3779,7 +3851,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const learning = learningSummary()
       const learningText = learning.shown === 0
         ? t('settings.learningEmpty')
-        : `${learning.accepted}/${learning.shown}（${Math.round(learning.rate * 100)}%）`
+        : `${learning.accepted}/${learning.shown}（${Math.round((learning.rate ?? 0) * 100)}%）`
 
       return h('div', {
         'data-composer-quill': 'settings-row',

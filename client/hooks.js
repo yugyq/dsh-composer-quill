@@ -136,7 +136,7 @@
             kind: input.state.kind,
             items: input.state.items.length,
             index: input.state.index,
-            forDraftLength: typeof input.state.forDraft === "string" ? input.state.forDraft.length : null,
+            forDraftLength: input.state.request !== null && input.state.request !== undefined ? input.state.request.draft.length : null,
             nextActive: input.nextActive,
             composeActive: input.composeActive,
             pendingCompose: input.pendingCompose,
@@ -476,7 +476,8 @@
       // so the ghost starts growing immediately. Split out of request().
       const composeStream = React.useCallback((live, draftNow) => {
           lastRequested.current = requestSignature(draftNow, live.attachmentKey)
-          const active = ghost.streamStart(live.sessionId, 'compose', draftNow)
+          const request = ghost.newRequest(live.sessionId, draftNow, live.attachmentKey)
+          const active = ghost.streamStart(request, 'compose')
           let idle = null
           let buffer = ''
           let frame = null
@@ -489,7 +490,7 @@
             if (buffer !== '') {
               const text = buffer
               buffer = ''
-              ghost.streamDelta(text, live.sessionId)
+              ghost.streamDelta(text, request)
             }
           }
           const queue = (text) => {
@@ -503,7 +504,7 @@
             if (idle !== null) clearTimeout(idle)
             idle = setTimeout(() => {
               active.abort()
-              ghost.streamFail('timed out', live.sessionId)
+              ghost.streamFail('timed out', request)
             }, live.timeoutMs || CLIENT_TIMEOUT_MS)
           }
           bump()
@@ -516,7 +517,7 @@
             retract: (data) => {
               bump()
               flush()
-              ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full', live.sessionId)
+              ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full', request)
             },
             delta: (data) => {
               bump()
@@ -525,28 +526,29 @@
             final: (data) => {
               bump()
               flush()
-              if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode, live.sessionId)
+              if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode, request)
               if (ghost.takeSuppressed?.() === true) report('suppressed', { sessionId: live.sessionId, detail: 'rewrite' })
             },
             done: (data) => {
               flush()
               markLive()
-              ghost.streamDone(data ?? {}, live.sessionId)
+              ghost.streamDone(data ?? {}, request)
               // Most compose suggestions arrive over SSE: persist them too, or
               // only the JSON fallback would ever be reused.
               const settled = ghost.getSnapshot()
               if (settled.kind === 'compose' && settled.items.length > 0) {
-                saveSuggestion(settled.sessionId, 'compose', settled.forDraft, settled.items, `${historyRef.current.items.length}`, settled.mode)
+                const settledDraft = settled.request !== null && settled.request !== undefined ? settled.request.draft : ''
+                saveSuggestion(settled.sessionId, 'compose', settledDraft, settled.items, `${historyRef.current.items.length}`, settled.mode)
               }
             },
             error: (data) => {
               const message = typeof data?.message === 'string' ? data.message : 'stream failed'
-              ghost.streamFail(message, live.sessionId)
+              ghost.streamFail(message, request)
               report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
             },
             json: (body) => {
               const items = rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
-              ghost.settle(live.sessionId, active, 'compose', draftNow, items)
+              ghost.settle(request, active, 'compose', items)
               saveSuggestion(live.sessionId, 'compose', draftNow, items, `${historyRef.current.items.length}`, typeof body?.mode === 'string' ? body.mode : '')
             },
           }).catch((error) => {
@@ -559,7 +561,7 @@
               return
             }
             const message = error instanceof Error ? error.message : String(error)
-            ghost.streamFail(message, live.sessionId)
+            ghost.streamFail(message, request)
             report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
           }).finally(() => {
             if (idle !== null) clearTimeout(idle)
@@ -574,10 +576,11 @@
   
       // The JSON path: one call, one settled answer. Split out of request().
       const nextJson = React.useCallback((live, draftNow, mode, kind) => {
-        const active = ghost.begin(live.sessionId, kind, draftNow)
+        const request = ghost.newRequest(live.sessionId, draftNow, live.attachmentKey)
+        const active = ghost.begin(request, kind)
         const deadline = setTimeout(() => {
           active.abort()
-          ghost.fail(live.sessionId, active, kind, draftNow, 'timed out')
+          ghost.fail(request, active, kind, 'timed out')
         }, live.timeoutMs || CLIENT_TIMEOUT_MS)
         active.signal.addEventListener('abort', () => clearTimeout(deadline), { once: true })
         Promise.resolve()
@@ -596,7 +599,7 @@
               clearSessionSuggestions(live.sessionId)
               markNoSuggestion(live.sessionId, kind, draftNow)
             }
-            ghost.settle(live.sessionId, active, kind, draftNow, items)
+            ghost.settle(request, active, kind, items)
             saveSuggestion(live.sessionId, kind, draftNow, items, `${historyRef.current.items.length}`, kind === 'next' ? 'full' : '')
           }, (error) => {
             if (active.signal.aborted) return
@@ -607,7 +610,7 @@
               return
             }
             const message = error instanceof Error ? error.message : String(error)
-            ghost.fail(live.sessionId, active, kind, draftNow, message)
+            ghost.fail(request, active, kind, message)
             report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: `${mode}: ${message}`.slice(0, 300) })
             try { console.warn('[composer-quill] request failed:', mode, message) } catch { /* no console */ }
           })
@@ -652,9 +655,8 @@
             stored: {
               sessionId: stored.sessionId,
               kind: stored.kind,
-              forDraft: stored.forDraft,
+              request: stored.request,
               phase: stored.phase,
-              requested: stored.requested,
             },
             dismissed: dockBooking.current.dismissed,
             attachmentKey: live.attachmentKey ?? '',
@@ -695,7 +697,8 @@
       React.useEffect(() => {
         if (!composeEnabled || running || sessionId === null) return undefined
         if (state.phase !== 'error' || state.kind !== 'compose') return undefined
-        if (state.forDraft !== draft || retriedFor.current === draft) return undefined
+        const failedFor = state.request !== null && state.request !== undefined ? state.request.draft : ''
+        if (failedFor !== draft || retriedFor.current === draft) return undefined
         retriedFor.current = draft
         // The timer lives in a ref: a deps change (the store moving, the draft
         // growing) must not silently swallow the one retry this draft gets.
@@ -710,7 +713,7 @@
             retryTimer.current = null
           }
         }
-      }, [state.phase, state.kind, state.forDraft, draft, enabled, running, sessionId, request])
+      }, [state.phase, state.kind, state.request, draft, enabled, running, sessionId, request])
       React.useEffect(() => () => {
         stopTimer()
         if (retryTimer.current !== null) clearTimeout(retryTimer.current)
@@ -742,7 +745,8 @@
             if (requestSignature(text, live.attachmentKey) === lastRequested.current) return
             if (dockBooking.current.dismissed === text) return
             const pending = ghost.getSnapshot()
-            if (pending.phase !== 'idle' && pending.forDraft === text) return
+            const pendingDraft = pending.request !== null && pending.request !== undefined ? pending.request.draft : ''
+            if (pending.phase !== 'idle' && pendingDraft === text) return
             // The draft still sits inside the proposal on screen: the draft effect has
             // already scheduled a debounced request for it, so the safety net must not
             // fire an immediate second one (S18 measured that as a wasted call).
@@ -925,10 +929,16 @@
           const storedText = stored.sessionId === sessionId && stored.kind === 'compose' && stored.items.length > 0
             ? stored.items[stored.index] ?? ''
             : ''
+          // Candidates cover the draft that produced them; a store that has moved
+          // on to a longer draft still holds the older ones.
+          const itemsFrom = stored.itemsRequest !== null && stored.itemsRequest !== undefined
+            ? stored.itemsRequest
+            : (stored.request !== null && stored.request !== undefined ? stored.request : null)
+          const storedDraft = itemsFrom !== null ? itemsFrom.draft : ''
           const covered = sameAttachments
             && storedText !== ''
-            && stored.forDraft !== draft
-            && draft.replace(/\s+$/, '').startsWith(stored.forDraft.replace(/\s+$/, ''))
+            && storedDraft !== draft
+            && draft.replace(/\s+$/, '').startsWith(storedDraft.replace(/\s+$/, ''))
             && followRemainder(storedText, draft.replace(/\s+$/, '')) !== ''
           if (covered && dockBooking.current.covered !== draft) {
             sendDock({ type: 'covered', draft })

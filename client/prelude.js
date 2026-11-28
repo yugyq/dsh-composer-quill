@@ -192,6 +192,7 @@ const COVERED_DEBOUNCE_MS = 1200
     function report(event, data) {
       try {
         const capability = token()
+        /** @type {Record<string, string>} */
         const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
         if (capability !== '') headers[TOKEN_HEADER] = capability
         fetch(BEACON, {
@@ -307,7 +308,8 @@ const COVERED_DEBOUNCE_MS = 1200
     /** Headers every request needs, so the two transports cannot drift apart. */
     function requestHeaders(accept) {
       const capability = token()
-      const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
+      /** @type {Record<string, string>} */
+        const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
       if (accept !== undefined) headers.accept = accept
       if (capability !== '') headers[TOKEN_HEADER] = capability
       return headers

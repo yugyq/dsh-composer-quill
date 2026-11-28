@@ -36,8 +36,9 @@
         if (next !== placeholderEl) {
           restorePlaceholder()
           placeholderEl = next
-          placeholderDisplay = next.style.display
-          next.style.display = 'none'
+          const placeholder = /** @type {HTMLElement} */ (next)
+          placeholderDisplay = placeholder.style.display
+          placeholder.style.display = 'none'
         }
       }
 
@@ -53,6 +54,14 @@
         })
       }
 
+      /**
+       * @param {number} left
+       * @param {number} top
+       * @param {number | null} width
+       * @param {number | null} maxWidth
+       * @param {string} align
+       * @param {number | null} [maxHeight]
+       */
       const place = (left, top, width, maxWidth, align, maxHeight = null) => {
         Object.assign(textEl.style, {
           // Sub-pixel precision: the origin is fractional, so rounding adds up.

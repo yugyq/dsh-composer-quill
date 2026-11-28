@@ -82,14 +82,13 @@
 | `items` | 候选（next：多条；compose：单条整文） |
 | `index` | next 模式下当前第几条（`←/→` 切换） |
 | `error` | 失败原因（仅 `error`） |
-| `forDraft` | **产生该结果时的草稿**（前缀比较的基准） |
-| `requested` | 正在进行的请求对应的草稿（流式期间有效） |
+| `request` | **产生该结果的那个请求的身份**：`{ sessionId, draft, attachmentKey, epoch }`；`null` 表示空闲 |
 
-`forDraft` 与 `requested` 的区别是这套状态机的关键：
+`request` 是这套状态机的关键：0.33.x 的四次串台都来自「建议没有身份」——会话写在 `sessionId` 里、草稿写在 `forDraft` 里、在飞的请求写在 `requested` 里，三份字段各写各的，读取点再各自校验。现在它们合成一个不可变对象，由 `commit(id, patch)` 一处写入、由 `frame(id, patch)` 一处校验：
 
-- `requested` 在 `streamStart/begin` 时写入，`done/fail/settle` 时清空；
-- `forDraft` 在 `done/fail/settle` 时**跟随本次请求**（`current.requested ?? current.forDraft`）；
-- 因此流式期间 UI 用 `requested` 判断归属，落地后用 `forDraft` 判断「这份建议是不是给现在这版草稿的」。
+- `commit(id, patch)`：开一条新请求或改状态，写入时**同时**把 `request` 换成 `id`，`sessionId` 只是它的降级副本；
+- `frame(id, patch)`：续写已经开始的请求，`id` 不是当前身份就整帧丢弃并给 `droppedFrames` 加一；
+- 因此「这份建议是不是给现在这版草稿的」＝`snapshot.request.draft`，「这条帧还能不能进」＝`snapshot.request === id`，不存在第二处判断。
 
 ### 4.2 phase 转换
 
@@ -205,7 +204,7 @@
 ## 8. 关键不变量（改代码前必读）
 
 1. **认领纪律**：`lastRequested` 只在真正发起请求时写入；任何「提前 return」的分支要么清掉认领，要么延迟重发。否则会出现「没请求、没建议、也不重试」的静默空洞。
-2. **`forDraft` 跟随请求**：`streamDelta/streamFinal/streamDone/streamFail` 都必须写 `current.requested ?? current.forDraft`，否则改写建议会永久不显示、重试永远跳过。
+2. **身份只有一处写入**：所有状态变更都走 `commit(id, patch)` / `frame(id, patch)`，`store.set` 不对插件其余部分开放；`streamDelta/streamFinal/streamDone/streamFail` 都必须带上请求的身份，否则迟到的帧会被写进下一个会话（issue #10）。
 3. **可见性判定**：`nextActive / composeActive / historyActive` 三者互斥优先（next > compose > history），且都要求 `!running`。
 4. **painter 必须订阅 store**：它依赖 `visible` 这个布尔，只有 store 订阅才能在流式期间持续重绘。
 5. **渲染期禁止副作用**：诊断上报放在 `useEffect` 里；渲染函数只读快照。

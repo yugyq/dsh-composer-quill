@@ -13,7 +13,7 @@
 |---|---|---|---|---|---|
 | 1 | **打字防抖** | 草稿变化，或会话切换后草稿为空 | `request('compose', draft, false, covered ? 1200 : undefined)` / `request('next', '', true)` | `enabled`、`sessionId !== null`、`!running`、`mode !== 'manual'`、`draft.trim().length >= 1`、`dismissedDraft !== draft`；先试 `hydrateStored()`，命中即不发 | `debounceMs`（默认 120）；草稿仍在旧建议里时 1200 |
 | 2 | **安全网** | 每 3000ms 轮询一次 | `request('compose', text)`（`force` 为 false） | 同上之外再加：`!composing`、`switchDraft` 已结算、`text !== lastRequested`、`dismissedDraft !== text`、store 未对本草稿处于非 idle、屏幕上建议不以本草稿为前缀 | 3000ms 轮询 |
-| 3 | **失败重试** | store 进入 `phase==='error' && kind==='compose'` | `request('compose', draft)` | 额外：`state.forDraft === draft`、`retriedFor !== draft`；**每份草稿一次** | 1200ms 后发 |
+| 3 | **失败重试** | store 进入 `phase==='error' && kind==='compose'` | `request('compose', draft)` | 额外：`state.request.draft === draft`、`retriedFor !== draft`；**每份草稿一次** | 1200ms 后发 |
 | 4 | **会话切换 / 回合结束** | `running` 由真变假 | `request('next', '', true)` | `enabled`、`draftEmpty`、`mode !== 'manual'`；先 `hydrateStored('next','')` | 立即（`force` 跳过 900ms 去重） |
 | 5 | **手动触发** | `Ctrl/Cmd+Shift+Space` | `request('compose', live.draft)` | `enabled`、`sessionId !== null`、`draft.trim().length >= 1`（**不看 `mode`**） | 立即，并先写 `lastRequested` |
 
@@ -32,7 +32,7 @@
 | 关系 | 现状 |
 |---|---|
 | 打字防抖 ⟷ 安全网 | **互斥**。安全网看到屏幕上建议以本草稿为前缀就跳过（S18 量到过重复调用） |
-| 打字防抖 ⟷ 重试 | 重试 effect 的依赖里含 `draft`：打一个字就清掉那个 1200ms 定时器，随后 `state.forDraft !== draft` 让它直接返回——**打字即取消这次重试** |
+| 打字防抖 ⟷ 重试 | 重试 effect 的依赖里含 `draft`：打一个字就清掉那个 1200ms 定时器，随后 `state.request.draft !== draft` 让它直接返回——**打字即取消这次重试** |
 | 重试 ⟷ 会话切换 | 回合结束会 `retriedFor = null`，下一轮重新给一次额度 |
 | 手动 ⟷ 其它 | 手动不受 `mode` 限制，也不受 `dismissedDraft` 限制（`Esc` 关掉后仍可手动要） |
 | 手动 ⟷ 安全网 | 手动会先写 `lastRequested`，安全网随后跳过 |

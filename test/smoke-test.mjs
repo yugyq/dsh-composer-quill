@@ -1169,8 +1169,9 @@ const props = (overrides = {}) => {
 await checkAsync('a cancelled stream leaves nothing to paint', async () => {
   const face = entryOf('conversation.input.dock').inject()
   face.ghost.clear()
-  face.ghost.streamStart('s-cancel', 'compose', '草稿')
-  face.ghost.streamDelta('半句')
+  const cancelled = face.ghost.newRequest('s-cancel', '草稿', '')
+  face.ghost.streamStart(cancelled, 'compose')
+  face.ghost.streamDelta('半句', cancelled)
   const mid = face.ghost.getSnapshot()
   face.ghost.cancel()
   const after = face.ghost.getSnapshot()
@@ -1494,46 +1495,71 @@ check('hydrate shows a stored suggestion without a request', () => {
   const face = entryOf('conversation.input.dock').inject()
   const ghost = face.ghost
   ghost.clear()
-  const shown = ghost.hydrate('s-h', 'next', '', ['继续之前的话题'])
+  const stored = ghost.newRequest('s-h', '', '')
+  const shown = ghost.hydrate(stored, 'next', ['继续之前的话题'])
   assert.equal(shown, true)
   assert.deepEqual(ghost.getSnapshot().items, ['继续之前的话题'])
   assert.equal(ghost.getSnapshot().phase, 'ready')
   // A live result wins: hydrate must not overwrite one.
-  ghost.streamStart('s-h', 'next', '')
-  const second = ghost.hydrate('s-h', 'next', '', ['别的'])
+  ghost.streamStart(ghost.newRequest('s-h', '', ''), 'next')
+  const second = ghost.hydrate(ghost.newRequest('s-h', '', ''), 'next', ['别的'])
   assert.equal(second, false)
+})
+
+check('candidates kept through a new request still answer the draft that produced them', () => {
+  const ghost = moduleExports.__test.createGhostStore()
+  const first = ghost.newRequest('s-k', '帮我把这段日志', '')
+  ghost.streamStart(first, 'compose')
+  ghost.streamModeSet('append')
+  ghost.streamDelta('，找出报错的那几行', first)
+  ghost.streamFinal('帮我把这段日志，找出报错的那几行。', 'append', first)
+  ghost.streamDone({}, first)
+  assert.equal(ghost.getSnapshot().itemsRequest, first)
+  // The draft grows while the older candidates are still on screen: they keep the
+  // identity that produced them, even though the request identity moved on.
+  const second = ghost.newRequest('s-k', '帮我把这段日志，另外贴一下配置文件', '')
+  ghost.streamStart(second, 'compose')
+  assert.equal(ghost.getSnapshot().request, second)
+  assert.equal(ghost.getSnapshot().itemsRequest, first)
+  assert.equal(ghost.getSnapshot().itemsRequest.draft, '帮我把这段日志')
+  // Once the new answer lands, the candidates belong to the new request.
+  ghost.streamFinal('帮我把这段日志，另外贴一下配置文件，再跑一遍。', 'append', second)
+  ghost.streamDone({}, second)
+  assert.equal(ghost.getSnapshot().itemsRequest, second)
 })
 
 check('a frame left over from another session cannot join the new one', () => {
   const ghost = moduleExports.__test.createGhostStore()
   // A 的流正在路上
-  ghost.streamStart('s-old', 'compose', '把这段报错')
+  const oldRequest = ghost.newRequest('s-old', '把这段报错', '')
+  ghost.streamStart(oldRequest, 'compose')
   ghost.streamModeSet('append')
-  ghost.streamDelta('，找出报错的那几行', 's-old')
+  ghost.streamDelta('，找出报错的那几行', oldRequest)
   assert.deepEqual(ghost.getSnapshot().items, ['把这段报错，找出报错的那几行'])
 
   // 用户切到新会话，新会话自己发了一次请求：store 从此属于 s-new
-  ghost.streamStart('s-new', 'compose', '把这段日志')
+  ghost.streamStart(ghost.newRequest('s-new', '把这段日志', ''), 'compose')
   assert.equal(ghost.getSnapshot().sessionId, 's-new')
 
   // A 的后续帧这时才到：它们属于 s-old，不许被写进 s-new 的快照
-  ghost.streamDelta('，按时间顺序排', 's-old')
+  ghost.streamDelta('，按时间顺序排', oldRequest)
   const afterDelta = ghost.getSnapshot()
   assert.equal(afterDelta.sessionId, 's-new', 'a late frame must not relabel the snapshot')
   assert.deepEqual(afterDelta.items, [], 'a late frame must not become the new session suggestion')
 
-  ghost.streamFinal('，按时间顺序排一下', 'append', 's-old')
+  ghost.streamFinal('，按时间顺序排一下', 'append', oldRequest)
   assert.deepEqual(ghost.getSnapshot().items, [], 'the late final frame is dropped too')
-  ghost.streamFail('boom', 's-old')
+  ghost.streamFail('boom', oldRequest)
   assert.equal(ghost.getSnapshot().phase, 'loading', 'and a late failure does not become this session error')
-  ghost.streamDone({ reason: 'unchanged' }, 's-old')
+  ghost.streamDone({ reason: 'unchanged' }, oldRequest)
   assert.equal(ghost.getSnapshot().phase, 'loading')
 
   // Four frames were dropped above, and each one was counted: a race that is
   // now handled must still leave a trace, or nobody can tell it happened.
   assert.equal(ghost.streamDropped(), 4)
-  ghost.streamStart('s-new', 'compose', '把这段日志')
-  ghost.streamDelta('，按服务分组', 's-new')
+  const newRequest = ghost.newRequest('s-new', '把这段日志', '')
+  ghost.streamStart(newRequest, 'compose')
+  ghost.streamDelta('，按服务分组', newRequest)
   assert.equal(ghost.streamDropped(), 4, 'a frame that belongs here is not a drop')
 })
 
@@ -1541,10 +1567,11 @@ check('a run of ignored suggestions withholds rewrites, not tails', () => {
   const ghost = moduleExports.__test.createGhostStore()
   ghost.setSuppressRewrites(true)
   const push = (mode, text) => {
-    ghost.streamStart('s-pause', 'compose', '草稿')
+    const request = ghost.newRequest('s-pause', '草稿', '')
+    ghost.streamStart(request, 'compose')
     ghost.streamModeSet(mode)
-    ghost.streamDelta(text)
-    ghost.streamFinal(text, mode)
+    ghost.streamDelta(text, request)
+    ghost.streamFinal(text, mode, request)
     return ghost.getSnapshot()
   }
 
@@ -2901,11 +2928,12 @@ group('client: error-first')
 
   check('an error outranks a later "nothing to add"', () => {
     const ghost = api.createGhostStore()
-    const active = ghost.begin('s1', 'compose', '帮我把这段日志')
-    ghost.streamFail('model call failed')
+    const request = ghost.newRequest('s1', '帮我把这段日志', '')
+    const active = ghost.begin(request, 'compose')
+    ghost.streamFail('model call failed', request)
     assert.equal(ghost.getSnapshot().phase, 'error')
     // The retry comes back saying the draft needs nothing: the reason must survive.
-    ghost.streamDone({ reason: 'unchanged' })
+    ghost.streamDone({ reason: 'unchanged' }, request)
     const after = ghost.getSnapshot()
     assert.equal(after.phase, 'error')
     assert.equal(after.error, 'model call failed')
@@ -2914,10 +2942,11 @@ group('client: error-first')
 
   check('a real answer after an error still wins', () => {
     const ghost = api.createGhostStore()
-    ghost.begin('s1', 'compose', '草稿')
-    ghost.streamFail('model call failed')
-    ghost.streamFinal('草稿，补一句。', 'append')
-    ghost.streamDone({ mode: 'append' })
+    const request = ghost.newRequest('s1', '草稿', '')
+    ghost.begin(request, 'compose')
+    ghost.streamFail('model call failed', request)
+    ghost.streamFinal('草稿，补一句。', 'append', request)
+    ghost.streamDone({ mode: 'append' }, request)
     const after = ghost.getSnapshot()
     assert.equal(after.phase, 'ready')
     assert.deepEqual(after.items, ['草稿，补一句。'])
@@ -2946,11 +2975,15 @@ group('client: gates')
     assert.equal(gate(base({ blockedUntil: 20_000 })), 'G2')
     assert.equal(gate(base({ served: { key: 'compose|帮我把这段日志', at: 9_000 } })), 'G3')
     assert.equal(gate(base({ lastCall: { key: 'compose|帮我把这段日志', at: 9_500 } })), 'G4a')
-    assert.equal(gate(base({ stored: { sessionId: 's1', kind: 'compose', forDraft: '帮我把这段日志', phase: 'ready' } })), 'G4b')
+    const answered = { sessionId: 's1', draft: '帮我把这段日志', attachmentKey: '', epoch: 1 }
+    assert.equal(gate(base({ stored: { sessionId: 's1', kind: 'compose', phase: 'ready', request: answered, itemsRequest: answered } })), 'G4b')
+    // Candidates that answer an older draft are not an answer to this one: with the
+    // same draft in flight the gate falls through to the in-flight check.
+    assert.equal(gate(base({ stored: { sessionId: 's1', kind: 'compose', phase: 'loading', request: answered, itemsRequest: { sessionId: 's1', draft: '帮我把这', attachmentKey: '', epoch: 0 } } })), 'G6')
     assert.equal(gate(base({ live: live({ running: true }) })), 'G5a')
     assert.equal(gate(base({ forDraft: '  ', live: live({ draft: '  ' }) })), 'G5b')
     assert.equal(gate(base({ dismissed: '帮我把这段日志' })), 'G5c')
-    assert.equal(gate(base({ stored: { sessionId: 's1', kind: 'compose', forDraft: '我把这段', phase: 'loading', requested: '帮我把这段' } })), 'G6')
+    assert.equal(gate(base({ stored: { sessionId: 's1', kind: 'compose', phase: 'loading', request: { sessionId: 's1', draft: '帮我把这段', attachmentKey: '', epoch: 3 } } })), 'G6')
     assert.equal(gate(base({})), 'G7')
   })
 
@@ -2965,11 +2998,11 @@ group('client: gates')
   check('the reuse gates report why they reused', () => {
     assert.deepEqual(effects(base({ served: { key: 'compose|帮我把这段日志', at: 9_000 } })), ['report'])
     assert.deepEqual(
-      effects(base({ stored: { sessionId: 's1', kind: 'compose', forDraft: '帮我把这段日志', phase: 'empty' } })),
+      effects(base({ stored: { sessionId: 's1', kind: 'compose', phase: 'empty', request: { sessionId: 's1', draft: '帮我把这段日志', attachmentKey: '', epoch: 2 }, itemsRequest: null } })),
       ['report', 'mark-last-call'],
     )
     assert.deepEqual(
-      effects(base({ stored: { sessionId: 's1', kind: 'compose', forDraft: '我把这段', phase: 'loading', requested: '帮我把这段' } })),
+      effects(base({ stored: { sessionId: 's1', kind: 'compose', phase: 'loading', request: { sessionId: 's1', draft: '帮我把这段', attachmentKey: '', epoch: 3 } } })),
       ['mark-last-call', 'report'],
     )
   })
@@ -2981,7 +3014,7 @@ group('client: gates')
     assert.equal(gate(base({ attachmentKey: printed })), 'G7')
     assert.equal(gate(base({ attachmentKey: printed, lastCall: { key: 'compose|帮我把这段日志', at: 9_700 } })), 'G7')
     assert.equal(
-      gate(base({ attachmentKey: printed, stored: { sessionId: 's1', kind: 'compose', forDraft: '帮我把这段日志', phase: 'ready' } })),
+      gate(base({ attachmentKey: printed, stored: { sessionId: 's1', kind: 'compose', phase: 'ready', request: { sessionId: 's1', draft: '帮我把这段日志', attachmentKey: '', epoch: 1 } } })),
       'G7',
     )
     // Asking again with the same picture is still one question.

@@ -36,7 +36,7 @@
         if (hydratedFor.current === marker) return false
         const items = loadSuggestion(sessionId, kind, forDraft)
         if (items === null || items.length === 0) return false
-        const shown = ghost.hydrate(sessionId, kind, forDraft, items)
+        const shown = ghost.hydrate(ghost.newRequest(sessionId, forDraft, ''), kind, items)
         // Only a suggestion that reached the screen may claim the marker: a
         // rejected hydrate (live result, in-flight request) must stay retryable.
         if (shown) {
@@ -189,7 +189,14 @@
       // follows it the two disagree for a frame, and trimming against the older
       // one paints the character the user just typed a second time.
       const remainder = followRemainder(composed, liveText.replace(/\s+$/, ''))
-      const fresh = state.forDraft === draft || state.forDraft === draftBase
+      // The draft these candidates answer is the one that produced them — not the
+      // request currently in flight. While a longer draft is being answered the
+      // store keeps the older candidates, and they belong to the older draft.
+      const itemsFrom = state.itemsRequest !== null && state.itemsRequest !== undefined
+        ? state.itemsRequest
+        : (state.request !== null && state.request !== undefined ? state.request : null)
+      const forDraft = itemsFrom !== null ? itemsFrom.draft : ''
+      const fresh = forDraft === draft || forDraft === draftBase
       const alreadyInEditor = proposalIsStale(current, liveText)
       // The candidates belong to the Session that asked for them: after a switch the
       // store still holds the previous one's, and an empty composer makes every other
@@ -215,7 +222,7 @@
       const historyMatch = enabled && !running && !nextActive && !composeActive
         && history.sessionId === sessionId
         && dockBooking.current.dismissed !== draft && dockBooking.current.dismissed !== draftBase
-        ? bestHistoryMatch(history.items, draftBase)
+        ? /** @type {{ tail: string } | null} */ (bestHistoryMatch(history.items, draftBase))
         : null
       const historyActive = historyMatch !== null
       const visible = nextActive || composeActive || historyActive
@@ -224,7 +231,7 @@
         ? current
         : composeActive
           ? (remainder !== '' ? remainder : composed)
-          : historyActive ? historyMatch.tail : ''
+          : historyMatch !== null ? historyMatch.tail : ''
       const proposalIsTail = nextActive ? false : composeActive ? remainder !== '' : historyActive
       const hintKey = nextActive
         ? 'hint.accept'
@@ -315,11 +322,11 @@
         const [showEmpty, setShowEmpty] = React.useState(false)
         React.useEffect(() => {
           if (state.phase !== 'empty' || state.sessionId !== sessionId) { setShowEmpty(false); return undefined }
-          if (state.forDraft !== draftBase && state.forDraft !== draft) { setShowEmpty(false); return undefined }
+          if (forDraft !== draftBase && forDraft !== draft) { setShowEmpty(false); return undefined }
           setShowEmpty(true)
           const timer = setTimeout(() => setShowEmpty(false), 2500)
           return () => clearTimeout(timer)
-        }, [state.phase, state.sessionId, state.forDraft, sessionId, draft, draftBase])
+        }, [state.phase, state.sessionId, forDraft, sessionId, draft, draftBase])
 
         // The offer is short-lived: eight seconds, or until the draft moves on.
         React.useEffect(() => {
@@ -382,7 +389,7 @@
         proposal,
         current,
         kind: state.kind,
-        forDraft: state.forDraft,
+        forDraft,
         fullText: composed,
         draftLength: draft.length,
         sessionId,
@@ -400,7 +407,7 @@
       const statusText = nextActive ? current : (composeActive || historyActive) ? proposal : ''
       // A failure used to be invisible: the store recorded it and nothing rendered it.
       const failureText = state.phase === 'error' && typeof state.error === 'string' && state.error !== ''
-        && (state.forDraft === draftBase || state.forDraft === draft)
+        && (forDraft === draftBase || forDraft === draft)
         ? state.error
         : ''
       // "Composing…" covers the whole wait for a usable proposal — including the
@@ -408,7 +415,7 @@
       // draft. It stops as soon as this exact draft has a settled answer
       // (a proposal, "nothing to add", or a failure).
       const answeredForThisDraft = (state.phase === 'empty' || state.phase === 'error' || state.phase === 'ready')
-        && (state.forDraft === draftBase || state.forDraft === draft)
+        && (forDraft === draftBase || forDraft === draft)
       const pendingCompose = composeEnabled && !running && statusText === ''
         && sessionId !== null
         && state.sessionId === sessionId
@@ -706,7 +713,7 @@
       const learning = learningSummary()
       const learningText = learning.shown === 0
         ? t('settings.learningEmpty')
-        : `${learning.accepted}/${learning.shown}（${Math.round(learning.rate * 100)}%）`
+        : `${learning.accepted}/${learning.shown}（${Math.round((learning.rate ?? 0) * 100)}%）`
 
       return h('div', {
         'data-composer-quill': 'settings-row',

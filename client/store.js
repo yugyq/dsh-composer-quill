@@ -18,7 +18,7 @@
     }
 
     const IDLE = Object.freeze({
-      sessionId: null, phase: 'idle', kind: 'next', items: [], index: 0, error: null, forDraft: '', requested: null,
+      sessionId: null, phase: 'idle', kind: 'next', items: [], index: 0, error: null, request: null, itemsRequest: null,
     })
 
     /**
@@ -68,7 +68,8 @@
           && stored !== null
           && stored.sessionId === live.sessionId
           && stored.kind === 'compose'
-          && stored.forDraft === draftNow
+          && stored.request !== null
+          && stored.request !== null && stored.request !== undefined && stored.request.draft === draftNow
           && (stored.phase === 'ready' || stored.phase === 'empty')) {
           effects.push({ type: 'report', name: 'reuse', detail: stored.phase })
           effects.push({ type: 'mark-last-call' })
@@ -86,7 +87,7 @@
         if (draftNow.trim().length < MIN_DRAFT_CHARS) return stop('G5b')
         if (input?.dismissed != null && input.dismissed === draftNow) return stop('G5c')
         const stored = input?.stored ?? null
-        if (stored !== null && stored.phase === 'loading' && inFlightCovers(stored.requested, draftNow)) {
+        if (stored !== null && stored.phase === 'loading' && stored.request !== null && stored.request !== undefined && inFlightCovers(stored.request.draft, draftNow)) {
           effects.push({ type: 'report', name: 'reuse', detail: 'in-flight' })
           return stop('G6')
         }
@@ -214,6 +215,10 @@
     function createGhostStore() {
       const store = createSnapshotStore(IDLE)
       let controller = null
+      // Which request the controller above belongs to. A controller outlives a
+      // session switch, so "is this still the current request" must be asked of the
+      // snapshot, not of the variable.
+      let controllerId = null
       let acc = ''
       let streamMode = 'full'
       // After a few suggestions ignored in a row, the rewrite is the expensive kind
@@ -238,37 +243,72 @@
       // The draft this stream was requested for. A retained proposal may belong
       // to an older draft, so the base must come from the request, not the store.
       let streamBase = ''
-      // Which Session opened this stream. A frame that arrives after the user moved to
-      // another Session belongs to the one that asked for it — writing it into the
-      // current snapshot turns the previous Session's answer into this one's.
-      let streamSession = null
-      // A late frame is dropped, not applied to whoever is on screen now.
-      const late = () => streamSession !== null && store.getSnapshot().sessionId !== streamSession
-  // Every frame carries the session it was requested for. A stream outlives a
-  // session switch; without this the frames of the old one land in the new one.
-  // A frame that no longer belongs here is dropped; counting it turns a silent
-  // race into something the log can show.
-  let droppedFrames = 0
-  const belongs = (fromSession) => {
-    if (fromSession === undefined) return true
-    if (store.getSnapshot().sessionId === fromSession) return true
-    droppedFrames += 1
-    return false
-  }
+      // Every request gets a number, and every write has to quote it. Two keystrokes
+      // and two answers used to be distinguishable only by draft text, which is the
+      // same string in all the interesting races.
+      let requestEpoch = 0
+      // Frames that arrived for a request the user had already moved past. Counting
+      // them turns a silent race into something the log can show.
+      let droppedFrames = 0
+
+      /**
+       * The identity of one question: which Session, which draft, which attachment,
+       * which attempt. `epoch` is local and monotonic; the Host's cache epoch is a
+       * separate thing and never reaches this store.
+       */
+      const newRequest = (sessionId, draft, attachmentKey) => {
+        requestEpoch += 1
+        return {
+          sessionId: typeof sessionId === 'string' ? sessionId : '',
+          draft: typeof draft === 'string' ? draft : '',
+          attachmentKey: typeof attachmentKey === 'string' ? attachmentKey : '',
+          epoch: requestEpoch,
+        }
+      }
+
+      // The ONE writer. Every state change names the request it belongs to, and
+      // `sessionId` is a denormalised copy of that identity -- nothing else may
+      // assign it. Starting a request is always allowed (that is the whole point of
+      // switching identity); a FRAME from an older request is not, and goes through
+      // frame() below instead of re-checking the same condition at eight call sites.
+      const commit = (id, patch) => {
+        const current = store.getSnapshot()
+        store.set({
+          ...current,
+          ...patch,
+          request: id,
+          sessionId: id === null ? null : id.sessionId,
+        })
+        return true
+      }
+
+      /** Write a frame only if it still belongs to the request on screen. */
+      const frame = (id, patch) => {
+        if (id === undefined || store.getSnapshot().request !== id) {
+          droppedFrames += 1
+          return false
+        }
+        return commit(id, patch)
+      }
+
       const cancel = () => {
+        const cancelled = controllerId
         if (controller !== null) {
           controller.abort()
           controller = null
         }
+        controllerId = null
         // Without this the dock keeps showing "补写中…" after a cancel (switching
         // Sessions, starting a turn) and nothing ever clears it.
         const current = store.getSnapshot()
-        if (current.phase === 'loading') store.set({ ...current, phase: 'idle', requested: null })
+        if (current.phase === 'loading' && current.request === cancelled) commit(null, { phase: 'idle' })
       }
       const proposalOf = () => (streamMode === 'append' ? `${streamBase.replace(/\s+$/, '')}${acc}` : acc)
       return {
         getSnapshot: store.getSnapshot,
         subscribe: store.subscribe,
+        /** The identity of the question about to be asked. */
+        newRequest,
         setSuppressRewrites: (flag) => {
           allowSuppress = flag !== false
           recomputeSuppress()
@@ -289,15 +329,15 @@
           ignoredStreak = 0
           recomputeSuppress()
         },
-        /** True once, if the last finished stream was withheld on purpose. */
         /** What the suppression rule is currently doing, for the dock-state beacon. */
         suppressState: () => ({ on: suppressRewrites, streak: ignoredStreak, allow: allowSuppress }),
+        /** True once, if the last finished stream was withheld on purpose. */
         takeSuppressed: () => {
           const was = lastSuppressed
           lastSuppressed = false
           return was
         },
-        /** How many frames were dropped because their session had moved on. */
+        /** How many frames were dropped because their request was no longer live. */
         streamDropped: () => droppedFrames,
         cancel: () => {
           cancel()
@@ -306,19 +346,17 @@
           acc = ''
           streamMode = 'full'
           streamBase = ''
-          store.set(IDLE)
+          commit(null, { phase: 'idle', items: [], index: 0, error: null, itemsRequest: null })
         },
         /** Streaming compose: same snapshot shape, filled in as deltas arrive. */
-        streamStart: (sessionId, kind, forDraft) => {
+        streamStart: (request, kind) => {
           cancel()
           streaming = true
-          // Identity of the request, not of the snapshot. A stream outlives a session
-          // switch, and every frame below must be able to tell whose answer it is.
-          streamSession = sessionId
           controller = new AbortController()
+          controllerId = request
           acc = ''
           streamMode = 'full'
-          streamBase = forDraft
+          streamBase = request.draft
           lastSuppressed = false
           // A compose answer may still turn out to be a rewrite, so nothing is
           // painted until the `start` frame says which case it is.
@@ -327,18 +365,16 @@
           // Keep the proposal that is already on screen; the first delta of this
           // request replaces it. Otherwise every keystroke blanks the composer.
           const keep = !holding
-            && previous.sessionId === sessionId
+            && previous.sessionId === request.sessionId
             && previous.kind === kind
             && previous.items.length > 0
-          store.set({
-            sessionId,
+          commit(request, {
             phase: 'loading',
             kind,
             items: keep ? previous.items : [],
+            itemsRequest: keep ? (previous.itemsRequest ?? previous.request) : null,
             index: keep ? Math.min(previous.index, previous.items.length - 1) : 0,
             error: null,
-            forDraft: keep ? previous.forDraft : forDraft,
-            requested: forDraft,
           })
           return controller
         },
@@ -349,35 +385,35 @@
           // that follow paint as usual.
           if (mode === 'append') holding = false
         },
-        streamRetract: (mode, fromSession) => {
-          if (!belongs(fromSession) || late()) return
+        streamRetract: (mode, request) => {
+          if (store.getSnapshot().request !== request) {
+            frame(request, {})
+            return
+          }
           acc = ''
           streamMode = mode === 'append' ? 'append' : 'full'
           if (streamMode === 'append') holding = false
-          const current = store.getSnapshot()
-          store.set({ ...current, items: [] })
+          frame(request, { items: [], itemsRequest: null })
         },
-        streamDelta: (text, fromSession) => {
+        streamDelta: (text, request) => {
           if (typeof text !== 'string' || text === '') return
-          if (!belongs(fromSession) || late()) return
+          if (store.getSnapshot().request !== request) {
+            frame(request, {})
+            return
+          }
           acc += text
           // Withheld: keep the scratch text, leave the composer alone.
           if (holding) return
-          const current = store.getSnapshot()
           // The store may still carry the proposal of an older draft (retention):
           // this result belongs to the draft the stream was requested for.
-          store.set({
-            sessionId: streamSession,
-            ...current,
-            phase: 'ready',
-            items: [proposalOf()],
-            forDraft: current.requested ?? current.forDraft,
-          })
+          frame(request, { phase: 'ready', items: [proposalOf()], itemsRequest: request })
         },
-        streamFinal: (text, mode, fromSession) => {
-          if (!belongs(fromSession) || late()) return
+        streamFinal: (text, mode, request) => {
+          if (store.getSnapshot().request !== request) {
+            frame(request, {})
+            return
+          }
           streaming = false
-          const current = store.getSnapshot()
           if (mode === 'append' || mode === 'full') streamMode = mode
           if (holding && streamMode === 'full') {
             // Suppressed rewrite: better silent than covering the draft the user is
@@ -385,7 +421,7 @@
             holding = false
             lastSuppressed = true
             acc = ''
-            store.set({ sessionId: streamSession, ...current, phase: 'empty', items: [], requested: null, forDraft: current.requested ?? current.forDraft })
+            frame(request, { phase: 'empty', items: [], itemsRequest: null })
             return
           }
           holding = false
@@ -397,38 +433,42 @@
               ? text.slice(base.length)
               : text
           }
-          store.set({ sessionId: streamSession, ...current, phase: 'ready', items: [proposalOf()], forDraft: current.requested ?? current.forDraft })
+          frame(request, { phase: 'ready', items: [proposalOf()], itemsRequest: request })
         },
-        streamDone: (meta, fromSession) => {
-          if (!belongs(fromSession) || late()) return
+        streamDone: (meta, request) => {
+          if (store.getSnapshot().request !== request) {
+            frame(request, {})
+            return
+          }
           streaming = false
           controller = null
+          controllerId = null
           const current = store.getSnapshot()
           const items = usableItems(current.items)
           const unchanged = meta !== null && typeof meta === 'object' && meta.reason === 'unchanged'
           // An error for this draft outranks a later "nothing to add": the user asked
           // once, it failed, and a quiet empty answer must not erase that fact.
           if (unchanged && current.phase === 'error') return
-          store.set({
-            sessionId: streamSession,
-            ...current,
+          frame(request, {
             phase: unchanged || items.length === 0 ? 'empty' : 'ready',
             // The Host said "nothing to change" for this draft: keeping the older
             // proposal would offer a suggestion it just rejected.
             items: unchanged ? [] : items,
+            itemsRequest: unchanged ? null : request,
             error: null,
-            requested: null,
-            forDraft: current.requested ?? current.forDraft,
           })
         },
-        streamFail: (message, fromSession) => {
-          if (!belongs(fromSession) || late()) return
+        streamFail: (message, request) => {
+          if (store.getSnapshot().request !== request) {
+            frame(request, {})
+            return
+          }
           streaming = false
           controller = null
-          const current = store.getSnapshot()
-          // Keep the retry budget pointed at the right draft: forDraft must follow
-          // this request, or the one-retry-per-draft guard never matches.
-          store.set({ sessionId: streamSession, ...current, phase: 'error', items: [], error: message, requested: null, forDraft: current.requested ?? current.forDraft })
+          controllerId = null
+          // The identity is what keeps the retry budget pointed at the right draft:
+          // a failure for an older request cannot overwrite this one's state.
+          frame(request, { phase: 'error', items: [], error: message, itemsRequest: null })
         },
         clear: (sessionId) => {
           const current = store.getSnapshot()
@@ -439,89 +479,76 @@
           acc = ''
           streamMode = 'full'
           streamBase = ''
-          store.set(IDLE)
+          commit(null, { phase: 'idle', kind: 'next', items: [], index: 0, error: null, itemsRequest: null })
         },
         /**
          * Show a suggestion that was computed earlier (from localStorage) without
          * asking the Host again. A live result always wins over a stored one.
          */
-        hydrate: (sessionId, kind, forDraft, items) => {
+        hydrate: (request, kind, items) => {
           if (!Array.isArray(items) || items.length === 0) return false
           // A stored compose answer may be a rewrite and carries no mode: while
           // suppressed, keep the store quiet and let a live request decide.
           if (suppressRewrites && kind === 'compose') return false
           const current = store.getSnapshot()
-          if (current.sessionId === sessionId && current.items.length > 0) return false
-          if (current.sessionId === sessionId && current.phase === 'loading') return false
-          store.set({
-            sessionId,
-            phase: 'ready',
-            kind,
-            items,
-            index: 0,
-            error: null,
-            forDraft,
-            requested: null,
-          })
+          if (current.sessionId === request.sessionId && current.items.length > 0) return false
+          if (current.sessionId === request.sessionId && current.phase === 'loading') return false
+          commit(request, { phase: 'ready', kind, items, index: 0, error: null })
           return true
         },
         cycle: (step) => {
           const current = store.getSnapshot()
           const total = current.items.length
           if (total < 2) return
-          store.set({ ...current, index: (current.index + step + total) % total })
+          commit(current.request, { index: (current.index + step + total) % total })
         },
         /**
          * Mark a request as started at schedule time (before the debounce fires)
          * so the UI can show a busy affordance immediately, while keeping the
          * proposal that is already on screen.
          */
-        begin: (sessionId, kind, forDraft) => {
+        begin: (request, kind) => {
           cancel()
           controller = new AbortController()
+          controllerId = request
           const previous = store.getSnapshot()
           // Keep the proposal that is already on screen: a new request must not
-          // blank the composer for a second. The retained proposal keeps its own
-          // `forDraft`, so the prefix arithmetic still matches what it was built
-          // from, and a rewrite for an older draft stays hidden by its guard.
-          const keep = previous.sessionId === sessionId
+          // blank the composer for a second. A retained proposal keeps its own
+          // identity, so the prefix arithmetic still matches what it was built from.
+          const keep = previous.sessionId === request.sessionId
             && previous.kind === kind
             && previous.items.length > 0
-          store.set({
-            sessionId,
+          commit(request, {
             phase: 'loading',
             kind,
             items: keep ? previous.items : [],
+            itemsRequest: keep ? (previous.itemsRequest ?? previous.request) : null,
             index: keep ? Math.min(previous.index, previous.items.length - 1) : 0,
             error: null,
-            forDraft: keep ? previous.forDraft : forDraft,
-            requested: forDraft,
           })
           return controller
         },
-        settle: (sessionId, active, kind, forDraft, rawItems) => {
+        settle: (request, active, kind, rawItems) => {
           if (controller !== active || active.signal.aborted) return
           controller = null
+          controllerId = null
           // The streaming path already drops anything that is not a non-empty string;
           // a malformed JSON answer used to reach the renderer instead.
           const items = usableItems(rawItems)
-          store.set({
-            sessionId,
+          commit(request, {
             // 'empty' is a settled answer ("nothing to add"), not a pending state.
             phase: items.length === 0 ? 'empty' : 'ready',
             kind,
             items,
             index: 0,
             error: null,
-            forDraft,
-            requested: null,
           })
         },
-        fail: (sessionId, active, kind, forDraft, message) => {
+        fail: (request, active, kind, message) => {
           if (controller !== active || active.signal.aborted) return
           controller = null
-          store.set({ sessionId, phase: 'error', kind, items: [], index: 0, error: message, forDraft, requested: null })
+          controllerId = null
+          commit(request, { phase: 'error', kind, items: [], index: 0, error: message, itemsRequest: null })
         },
       }
     }
-

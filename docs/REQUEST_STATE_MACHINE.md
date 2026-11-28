@@ -36,13 +36,13 @@ request(mode, forDraft, force = false, delayOverride = null)
 | **G2** | 会话未加载（退避中） | `liveBlocked()` = `Date.now() < notLive.until` | `notLive` | return | 退避到期由 `markNotLive` 的定时器自行重发 | 1633 |
 | **G3** | 存储刚答过 | 同 `mode｜draft` 且 `servedFromStore.at` 在 5s 内 | `servedFromStore` | `report('reuse','store')` + return | **不写 `lastCall`** | 1638–1643 |
 | **G4a** | 900ms 去重 | `!force` 且同 `mode｜draft` 且 `lastCall.at` 在 900ms 内 | `lastCall` | `report('dedupe')`，按 `max(80, 900-Δ)` 重新 `request(...)` + return | **不改 `lastCall`**，重排一次可能再次被拦 | 1648–1656 |
-| **G4b** | store 已有结果 | `mode==='compose'` 且 store 的 session/kind/forDraft 与之相同且相位是 `ready`/`empty` | `ghost.getSnapshot()` | `report('reuse',phase)` + return | **写 `lastCall`**（与 G3 不同） | 1657–1666 |
+| **G4b** | store 已有结果 | `mode==='compose'` 且 `store.request` 的 `sessionId`/`kind`/`draft` 与本请求相同、相位是 `ready`/`empty` | `ghost.getSnapshot()` | `report('reuse',phase)` + return | **写 `lastCall`**（与 G3 不同） | `client/store.js` 的 `gateFor` |
 | **G4c** | 通过去重 | 其余 `!force` 情形 | — | 继续 | **写 `lastCall = {key, now}`** | 1667 |
 | **G5a** | 回合进行中 | `running` | `latest.current` | return（`next` 与 `compose` 各自都判） | 无 | 1669, 1671 |
 | **G5b** | 草稿太短 | `mode==='compose'` 且 `draftNow.trim().length < 1` | — | return | 无 | 1671 |
 | **G5c** | 已按 Esc | `mode==='compose'` 且 `dismissedDraft === draftNow` | `dismissedDraft` | return | 无 | 1672 |
 | **G5d** | 空输入框才有 `next` | `mode==='next'` 且 `!draftEmpty` | `latest.current` | return | 无 | 1669 |
-| **G6** | 在飞请求已覆盖 | `phase==='loading'` 且 `inFlightCovers(requested, draftNow)` | `ghost.getSnapshot()` | `report('reuse','in-flight')` + return | 无 | 1675–1679 |
+| **G6** | 在飞请求已覆盖 | `phase==='loading'` 且 `store.request !== null` 且 `inFlightCovers(store.request.draft, draftNow)` | `ghost.getSnapshot()` | `report('reuse','in-flight')` + return | 无 | `client/store.js` 的 `gateFor` |
 | **G7** | 放行 | 以上皆未命中 | — | 发送 | `compose`：写 `lastRequested`、`streamStart`；`next`：`begin` | 1685–1687, 1782 |
 
 通过 G7 之后两条路径分叉（不在本表内，保持现状）：`compose` 走 SSE（`streamRoute` + rAF 合帧 + 空闲超时 `bump`），`next` 走 JSON（`callRoute` + 20s deadline）。两条都处理 409（→ `markNotLive`）与错误上报。

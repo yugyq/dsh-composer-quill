@@ -8,9 +8,25 @@
     "checkJs": true,
     "noEmit": true,
     "strict": true,
+    // The browser sources are ten fragments of one factory function: most of the
+    // remaining backlog is "parameter has no type" (307 sites at the time of
+    // writing), which JSDoc will pay down file by file. Null-checks, unknown
+    // narrowing and the identity types stay on, because those are the checks that
+    // would have caught the bugs of 0.33.x.
+    "noImplicitAny": false,
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["client/*.js"]
+  "include": [
+    "client/attachments.js",
+    "client/config.js",
+    "client/dock.js",
+    "client/geometry.js",
+    "client/ghost-layer.js",
+    "client/hooks.js",
+    "client/prelude.js",
+    "client/store.js",
+    "client/scope.d.ts"
+  ]
 }

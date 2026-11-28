@@ -140,7 +140,7 @@
      * computed in. Bumping the epoch on every finished turn means nothing survives
      * a turn, so an answer about an older topic can never come back.
      */
-    function suggestionKey(sessionId, kind, draft, epoch = '') {
+    function suggestionKey(sessionId, kind, draft, epoch = 0) {
       return `${sessionId ?? ''}|${kind}|${draft ?? ''}|${epoch}`
     }
 
@@ -327,6 +327,7 @@
       return turnEpoch.current
     }
 
+    /** @type {{ raw: string | null, data: Record<string, any> }} */
     let learnMemo = { raw: null, data: {} }
 
     function readLearning() {
