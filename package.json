@@ -82,6 +82,10 @@
     "build:client": "node dev/tools/build-client.mjs",
     "check:client": "node dev/tools/build-client.mjs --check",
     "harness:build": "node dev/harness/build.mjs",
-    "harness:install": "npm ci --prefix dev/harness --no-audit --no-fund"
+    "harness:install": "npm ci --prefix dev/harness --no-audit --no-fund",
+    "check:types": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }
