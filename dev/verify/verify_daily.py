@@ -1507,6 +1507,27 @@ def main() -> int:
         h("setSession('s-harness')")
         reset("")
 
+        # ---- S59 清空草稿之后，属于那句话的尾巴不许留在空输入框里（0.33.3 截图）
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_function("() => window.__harnessReady === true")
+        h("setComposeMode('ok')")
+        h("press({key: 'Shift'})")
+        h("typeLive('测试过了吗，你可以自己操作电脑进行测试', {delay: 20})")
+        page.wait_for_timeout(1600)
+        s59_before = proposal_of(h("snapshot()"))
+        page.keyboard.press("Control+a")
+        page.keyboard.press("Delete")
+        page.wait_for_timeout(400)
+        s59_after = proposal_of(h("snapshot()"))
+        s59_store = h("store()")
+        record(
+            "S59 草稿清空后，那句话的尾巴不许留在空输入框里",
+            s59_before != "" and s59_after == "" and s59_store.get("kind") == "compose",
+            f"清空前={s59_before!r} 清空后={s59_after!r} 存储仍属于={s59_store.get('kind')}",
+        )
+        reset("")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
 
@@ -1521,7 +1542,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 70
+EXPECTED_SCENARIOS = 71
 
 
 if __name__ == "__main__":

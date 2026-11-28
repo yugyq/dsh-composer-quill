@@ -3,7 +3,7 @@
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.33.3'
+    const BUILD = '0.33.4'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -283,6 +283,24 @@ const COVERED_DEBOUNCE_MS = 1200
       if (live.storeSessionId !== live.sessionId) return false
       if (live.alreadyInEditor === true) return false
       return typeof live.current === 'string' && live.current !== ''
+    }
+
+    /**
+     * A compose suggestion is about text that is already there: a tail continues it,
+     * a rewrite replaces it. With an empty composer there is nothing to continue, and
+     * `followRemainder(full, '')` is the whole suggestion — which is how a leftover
+     * from the previous draft ended up painted as if it were the user's opening line.
+     */
+    function composeVisible(input) {
+      const live = input ?? {}
+      if (live.composeEnabled === false || live.running === true) return false
+      if (live.kind !== 'compose') return false
+      if (live.sessionId === null || live.sessionId === undefined) return false
+      if (live.storeSessionId !== live.sessionId) return false
+      if (typeof live.composed !== 'string' || live.composed === '') return false
+      if (typeof live.editorText !== 'string' || live.editorText.trim() === '') return false
+      if (live.tail !== '') return true
+      return live.fresh === true && live.composed.trim() !== live.draftBase.trim()
     }
 
     /** Read an SSE compose response, falling back to a whole JSON body. */

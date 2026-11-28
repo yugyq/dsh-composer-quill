@@ -198,11 +198,18 @@
         nextEnabled, running, draftEmpty, kind: state.kind, sessionId,
         storeSessionId: state.sessionId, current, alreadyInEditor,
       })
-      const composeActive = composeEnabled && !running
-        && state.kind === 'compose'
-        && state.sessionId === sessionId
-        && composed !== ''
-        && (remainder !== '' || (fresh && composed.trim() !== draftBase.trim()))
+      const composeActive = composeVisible({
+        composeEnabled,
+        running,
+        kind: state.kind,
+        sessionId,
+        storeSessionId: state.sessionId,
+        composed,
+        editorText: liveText,
+        tail: remainder,
+        fresh,
+        draftBase,
+      })
       // Model proposal first; while it is missing, the user's own history fills
       // the gap instantly (no request, no debounce).
       const historyMatch = enabled && !running && !nextActive && !composeActive

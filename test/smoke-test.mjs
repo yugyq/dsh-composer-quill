@@ -1349,6 +1349,27 @@ check('the previous Session next-message candidates are not shown in this one', 
   assert.equal(nextVisible(live({ nextEnabled: false })), false, 'switched off')
 })
 
+check('an empty composer never paints a leftover tail', () => {
+  const { composeVisible } = moduleExports.__test
+  const live = (over) => ({
+    composeEnabled: true, running: false, kind: 'compose',
+    sessionId: 's-one', storeSessionId: 's-one', composed: '过了吗，你可以自己操作电脑进行测试',
+    editorText: '测试', tail: '过了吗，你可以自己操作电脑进行测试', fresh: true, draftBase: '测试',
+    ...over,
+  })
+  assert.equal(composeVisible(live({})), true, 'a draft and its tail: show the tail')
+  assert.equal(composeVisible(live({ editorText: '' })), false, 'an empty composer has nothing to continue')
+  assert.equal(composeVisible(live({ editorText: '   ' })), false, 'whitespace is still empty')
+  assert.equal(composeVisible(live({ tail: '' })), true, 'a rewrite still has something to replace')
+  assert.equal(composeVisible(live({ tail: '', composed: '测试', draftBase: '测试' })), false, 'nothing changed: nothing to show')
+  assert.equal(composeVisible(live({ kind: 'next' })), false, 'next-message candidates take the other path')
+  assert.equal(composeVisible(live({ storeSessionId: 's-two' })), false, 'the store belongs to the Session we left')
+  assert.equal(composeVisible(live({ sessionId: null })), false, 'no Session, nothing to show')
+  assert.equal(composeVisible(live({ running: true })), false, 'the assistant is answering')
+  assert.equal(composeVisible(live({ composeEnabled: false })), false, 'switched off')
+  assert.equal(composeVisible(live({ composed: '' })), false, 'nothing to show')
+})
+
 check('the page token outlives a reload', () => {
   const { token } = moduleExports.__test
   const saved = globalThis.window.__DSH_COMPOSER_QUILL_TOKEN__
