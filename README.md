@@ -114,11 +114,11 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill   # 或从仓�
 
 ## 测试
 
-单测 190 项、浏览器场景 71 项，跑在 CI 里。场景覆盖快速连打、停顿出建议、取消、切会话、长文本排版这些真实节奏。
+单测 191 项、浏览器场景 75 项，跑在 CI 里。场景覆盖快速连打、停顿出建议、取消、切会话、长文本排版这些真实节奏。
 
 ```bash
 npm test                          # 190 项离线单测（含 client.js 是否与 client/ 同步）
-npm run test:ui                   # 71 条浏览器场景（自带模拟器）
+npm run test:ui                   # 75 条浏览器场景（自带模拟器）
 npm test -- --filter=transcript   # 只跑某个行为
 npm test -- --list                # 列出全部用例名
 ```
