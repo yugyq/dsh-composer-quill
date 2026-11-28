@@ -392,6 +392,24 @@ async function main() {
       return document.querySelectorAll('[data-composer-quill="layer"]').length
     },
     /**
+     * Which composer a dock would paint into: its own, not "the first one in the
+     * document". A dock with no chip left must not adopt a stranger's field.
+     */
+    composerProbe() {
+      const pick = mod.__test?.composerForDock
+      if (typeof pick !== 'function') return { made: false }
+      const own = pick('s-harness')
+      const first = document.querySelector('[data-composer-input]')
+      const stranger = pick('s-nowhere-at-all')
+      return {
+        made: true,
+        ownIsFirst: own === first,
+        ownTag: own === null ? null : 'composer',
+        stranger: stranger === null ? null : 'composer',
+        composers: document.querySelectorAll('[data-composer-input]').length,
+      }
+    },
+    /**
      * The stale dock's layer is still on the composer and the new dock has nothing to
      * say yet: mounting alone must take the old one away.
      */

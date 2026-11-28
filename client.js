@@ -311,6 +311,44 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     /**
+     * The composer this dock lives in. A dock whose chip is no longer in the document
+     * is not on screen: it must not paint into whatever composer happens to be first.
+     */
+    function composerForDock(sessionId) {
+      if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return null
+      const all = Array.from(document.querySelectorAll('[data-composer-input]'))
+        .filter((node) => node !== null && node.isConnected !== false)
+      if (all.length === 0) return null
+      const id = typeof sessionId === 'string' ? sessionId : ''
+      const chip = id === '' ? null : document.querySelector(`[data-composer-quill="dock"][data-session="${id}"]`)
+      // No chip, no claim: a dock that cannot show where it lives does not paint.
+      // (Guessing "the only composer" is what let a stale dock adopt a new Session.)
+      if (chip === null || chip === undefined) return null
+      if (typeof chip.closest === 'function') {
+        const inside = chip.closest('[data-composer-input]')
+        if (inside !== null && inside.isConnected !== false) return inside
+      }
+      // The slot is not nested inside the composer box: take the nearest one. A chip
+      // that was carried away with its pane has no neighbour within reach, and the
+      // distance check below keeps it from adopting a stranger's field.
+      const rect = typeof chip.getBoundingClientRect === 'function' ? chip.getBoundingClientRect() : null
+      if (rect === null || (rect.width === 0 && rect.height === 0)) return null
+      let best = null
+      let bestGap = Infinity
+      for (const node of all) {
+        const box = node.getBoundingClientRect()
+        const dx = Math.max(box.left - rect.right, rect.left - box.right, 0)
+        const dy = Math.max(box.top - rect.bottom, rect.top - box.bottom, 0)
+        const gap = dx * dx + dy * dy
+        if (gap < bestGap) {
+          bestGap = gap
+          best = node
+        }
+      }
+      return best
+    }
+
+    /**
      * A compose suggestion is about text that is already there: a tail continues it,
      * a rewrite replaces it. With an empty composer there is nothing to continue, and
      * `followRemainder(full, '')` is the whole suggestion — which is how a leftover
@@ -1799,6 +1837,7 @@ const COVERED_DEBOUNCE_MS = 1200
     // claimed last is the one on screen; everyone else goes quiet.
     let liveLayer = null
 
+
     function createGhostLayer(owner = '') {
       // The Session this layer belongs to. A dock that has been unmounted keeps a
       // reference to its layer for one more effect run, and mount() used to adopt
@@ -2037,7 +2076,7 @@ const COVERED_DEBOUNCE_MS = 1200
       }
 
       const mount = () => {
-        const editor = editorEl()
+        const editor = mine !== null && mine.isConnected ? mine : editorEl()
         if (editor === null) return false
         // A layer that is still attached belongs to some composer right now. If it is
         // not ours, this dock has been swapped out: painting here would put another
@@ -2147,7 +2186,7 @@ const COVERED_DEBOUNCE_MS = 1200
         if (host === null) {
           if (!mount()) return
         }
-        if (editorEl() !== target) {
+        if ((mine !== null && mine.isConnected ? mine : editorEl()) !== target) {
           clear()
           if (!mount()) return
         }
@@ -2167,6 +2206,16 @@ const COVERED_DEBOUNCE_MS = 1200
         target = null
       }
 
+      // The composer this dock belongs to. Set at paint time from the dock's own chip,
+      // so a dock the host kept alive cannot paint into a different Session's field.
+      let mine = null
+
+      /** Point this layer at the composer it belongs to (null = none on screen). */
+      const bind = (composer) => {
+        mine = composer !== null && composer !== undefined && composer.isConnected !== false ? composer : null
+        return mine !== null
+      }
+
       /** Take the screen: drop every layer in the document, including our own. */
       const claim = () => {
         liveLayer = token
@@ -2180,7 +2229,7 @@ const COVERED_DEBOUNCE_MS = 1200
         return true
       }
 
-      return { render, clear, sweep, claim, release, isMounted: () => host !== null && host.isConnected, debug }
+      return { render, clear, sweep, claim, release, bind, isMounted: () => host !== null && host.isConnected, debug }
     }
 
 // --- hooks.js — concatenated into client.js by dev/tools/build-client.mjs ---
@@ -2447,12 +2496,21 @@ const COVERED_DEBOUNCE_MS = 1200
           return
         }
         const data = paintData.current
+        // Only the composer holding this dock's own chip may receive a ghost. The host
+        // keeps a replaced dock mounted, and `editorEl()` would hand it whatever
+        // composer is first in the document — that is how one Session's tail showed up
+        // in another Session's empty field.
+        const mine = composerForDock(data.sessionId)
+        if (typeof ghostLayer.bind === 'function' && !ghostLayer.bind(mine)) {
+          ghostLayer.clear()
+          return
+        }
         let anchor = 'none'
         // The host reports the draft from its own state, and the editor keeps the
         // previous Session's text until the swap lands: believing the prop alone paints
         // the ghost over text that is still there. Read the editor too.
         const editorText = (() => {
-          const editor = editorEl()
+          const editor = mine ?? editorEl()
           if (editor === null) return ''
           return typeof editor.value === 'string' ? editor.value : (editor.textContent ?? '')
         })()
@@ -3659,6 +3717,9 @@ const COVERED_DEBOUNCE_MS = 1200
       return h(React.Fragment, null,
         h('div', {
           'data-composer-quill': 'dock',
+          // Which Session this dock speaks for. The layer uses it to find the
+          // composer it belongs to instead of the first one in the document.
+          'data-session': sessionId === null || sessionId === undefined ? '' : String(sessionId),
           style: {
             display: 'flex',
             alignItems: 'center',
@@ -4083,6 +4144,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, composeVisible, token, closeOnEscape, layerStats, pickEditor, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, composeVisible, composerForDock, token, closeOnEscape, layerStats, pickEditor, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

@@ -9,6 +9,7 @@
     // claimed last is the one on screen; everyone else goes quiet.
     let liveLayer = null
 
+
     function createGhostLayer(owner = '') {
       // The Session this layer belongs to. A dock that has been unmounted keeps a
       // reference to its layer for one more effect run, and mount() used to adopt
@@ -247,7 +248,7 @@
       }
 
       const mount = () => {
-        const editor = editorEl()
+        const editor = mine !== null && mine.isConnected ? mine : editorEl()
         if (editor === null) return false
         // A layer that is still attached belongs to some composer right now. If it is
         // not ours, this dock has been swapped out: painting here would put another
@@ -357,7 +358,7 @@
         if (host === null) {
           if (!mount()) return
         }
-        if (editorEl() !== target) {
+        if ((mine !== null && mine.isConnected ? mine : editorEl()) !== target) {
           clear()
           if (!mount()) return
         }
@@ -377,6 +378,16 @@
         target = null
       }
 
+      // The composer this dock belongs to. Set at paint time from the dock's own chip,
+      // so a dock the host kept alive cannot paint into a different Session's field.
+      let mine = null
+
+      /** Point this layer at the composer it belongs to (null = none on screen). */
+      const bind = (composer) => {
+        mine = composer !== null && composer !== undefined && composer.isConnected !== false ? composer : null
+        return mine !== null
+      }
+
       /** Take the screen: drop every layer in the document, including our own. */
       const claim = () => {
         liveLayer = token
@@ -390,6 +401,6 @@
         return true
       }
 
-      return { render, clear, sweep, claim, release, isMounted: () => host !== null && host.isConnected, debug }
+      return { render, clear, sweep, claim, release, bind, isMounted: () => host !== null && host.isConnected, debug }
     }
 

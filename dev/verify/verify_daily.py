@@ -1564,6 +1564,22 @@ def main() -> int:
             f"挂载前图层={s61.get('before')} 认领后={s61.get('layers')}",
         )
 
+        # ---- S62 只画进自己那块输入框
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_timeout(1200)
+        s62_one = h("composerProbe()")
+        h("secondComposer('第二个输入框')")
+        s62_two = h("composerProbe()")
+        record(
+            "S62 补全只画进自己那块输入框",
+            s62_one.get("made") is True and s62_one.get("ownIsFirst") is True
+            and s62_one.get("stranger") is None
+            and s62_two.get("ownIsFirst") is True and s62_two.get("composers") == 2
+            and s62_two.get("stranger") is None,
+            f"单输入框={s62_one} 双输入框={s62_two}",
+        )
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
 
@@ -1578,7 +1594,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 73
+EXPECTED_SCENARIOS = 74
 
 
 if __name__ == "__main__":

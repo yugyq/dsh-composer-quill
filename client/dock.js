@@ -481,6 +481,9 @@
       return h(React.Fragment, null,
         h('div', {
           'data-composer-quill': 'dock',
+          // Which Session this dock speaks for. The layer uses it to find the
+          // composer it belongs to instead of the first one in the document.
+          'data-session': sessionId === null || sessionId === undefined ? '' : String(sessionId),
           style: {
             display: 'flex',
             alignItems: 'center',

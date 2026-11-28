@@ -287,6 +287,44 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     /**
+     * The composer this dock lives in. A dock whose chip is no longer in the document
+     * is not on screen: it must not paint into whatever composer happens to be first.
+     */
+    function composerForDock(sessionId) {
+      if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return null
+      const all = Array.from(document.querySelectorAll('[data-composer-input]'))
+        .filter((node) => node !== null && node.isConnected !== false)
+      if (all.length === 0) return null
+      const id = typeof sessionId === 'string' ? sessionId : ''
+      const chip = id === '' ? null : document.querySelector(`[data-composer-quill="dock"][data-session="${id}"]`)
+      // No chip, no claim: a dock that cannot show where it lives does not paint.
+      // (Guessing "the only composer" is what let a stale dock adopt a new Session.)
+      if (chip === null || chip === undefined) return null
+      if (typeof chip.closest === 'function') {
+        const inside = chip.closest('[data-composer-input]')
+        if (inside !== null && inside.isConnected !== false) return inside
+      }
+      // The slot is not nested inside the composer box: take the nearest one. A chip
+      // that was carried away with its pane has no neighbour within reach, and the
+      // distance check below keeps it from adopting a stranger's field.
+      const rect = typeof chip.getBoundingClientRect === 'function' ? chip.getBoundingClientRect() : null
+      if (rect === null || (rect.width === 0 && rect.height === 0)) return null
+      let best = null
+      let bestGap = Infinity
+      for (const node of all) {
+        const box = node.getBoundingClientRect()
+        const dx = Math.max(box.left - rect.right, rect.left - box.right, 0)
+        const dy = Math.max(box.top - rect.bottom, rect.top - box.bottom, 0)
+        const gap = dx * dx + dy * dy
+        if (gap < bestGap) {
+          bestGap = gap
+          best = node
+        }
+      }
+      return best
+    }
+
+    /**
      * A compose suggestion is about text that is already there: a tail continues it,
      * a rewrite replaces it. With an empty composer there is nothing to continue, and
      * `followRemainder(full, '')` is the whole suggestion — which is how a leftover

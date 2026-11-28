@@ -262,12 +262,21 @@
           return
         }
         const data = paintData.current
+        // Only the composer holding this dock's own chip may receive a ghost. The host
+        // keeps a replaced dock mounted, and `editorEl()` would hand it whatever
+        // composer is first in the document — that is how one Session's tail showed up
+        // in another Session's empty field.
+        const mine = composerForDock(data.sessionId)
+        if (typeof ghostLayer.bind === 'function' && !ghostLayer.bind(mine)) {
+          ghostLayer.clear()
+          return
+        }
         let anchor = 'none'
         // The host reports the draft from its own state, and the editor keeps the
         // previous Session's text until the swap lands: believing the prop alone paints
         // the ghost over text that is still there. Read the editor too.
         const editorText = (() => {
-          const editor = editorEl()
+          const editor = mine ?? editorEl()
           if (editor === null) return ''
           return typeof editor.value === 'string' ? editor.value : (editor.textContent ?? '')
         })()
