@@ -36,11 +36,13 @@ const MAX_CANDIDATES = 3
 // Context budget: one group, every call site reads from here. There is no second
 // "tight" set any more — a 1600-character transcript held two turns, and the model
 // answered with invented placeholders when the fact it needed sat just outside it.
-// Rows are a ceiling only; `chars` is what bounds the prompt.
+// Rows are only a guard against pathological event counts — `chars` bounds the
+// prompt. Every short message is ~45 characters, so 32 rows kept 16 turns and
+// silently overruled the character budget; that is why the ceilings are loose.
 const CONTEXT_BUDGET = Object.freeze({
-  short: { rows: 24, chars: 2400 },
-  main: { rows: 32, chars: 3200 },
-  next: { rows: 32, chars: 3200 },
+  short: { rows: 120, chars: 2400 },
+  main: { rows: 200, chars: 3200 },
+  next: { rows: 200, chars: 3200 },
   message: 2200,
   fallback: 9000,
 })

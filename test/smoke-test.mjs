@@ -878,6 +878,23 @@ check('the row ceiling never starves the character budget', () => {
   assert.ok(byDefault.includes('KX-7731'), 'the default ceiling must not starve the budget either')
 })
 
+check('a forty-turn conversation still reaches back to turn six', () => {
+  const { transcriptOf } = host.__test
+  // Rows used to bind long before characters did: 32 rows kept 16 turns of short
+  // messages (1.8k of a 3.2k budget), so a decision made at turn 6 of 40 never
+  // arrived. The real model answered "字段 40" — an invented number — because of it.
+  const events = []
+  for (let turn = 1; turn <= 40; turn += 1) {
+    const text = turn === 6 ? '顺便定一下：这个项目的仓编号是 KX-7731。' : `第 ${turn} 轮：字段 ${turn} 对齐了。`
+    events.push({ type: 'user/message', data: { content: [{ type: 'text', text }] } })
+    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第 ${turn} 轮：收到。` }] } } })
+  }
+  const byDefault = transcriptOf(events)
+  assert.ok(byDefault.includes('KX-7731'), `the default budget must reach turn 6: ${byDefault.length} chars`)
+  const narrow = transcriptOf(events, { rows: 8, chars: 1600 })
+  assert.ok(!narrow.includes('KX-7731'), 'the old ceilings are what dropped it — keep the comparison honest')
+})
+
 checkAsync('the prompt keeps the first decision and a fact buried mid-message', async () => {
   const { produceCompose } = host.__test
   // Two facts that the old numbers dropped in opposite ways: a decision made in
