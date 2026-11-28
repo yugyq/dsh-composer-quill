@@ -694,6 +694,7 @@ async function main() {
       const card = document.querySelector('.scroll')
       const chip = document.querySelector('[data-composer-quill="dock-suggestion"]')
       const painted = text === null ? '' : text.textContent ?? ''
+      const host = text === null ? null : text.parentElement
       return {
         painted,
         chars: Array.from(painted).length,
@@ -701,6 +702,8 @@ async function main() {
         cardHeight: card === null ? null : Math.round(card.getBoundingClientRect().height),
         cardMaxHeight: card === null ? null : getComputedStyle(card).maxHeight,
         chip: chip === null ? null : (chip.textContent ?? ''),
+        textHeight: text === null ? null : Math.round(text.getBoundingClientRect().height),
+        hostParent: host === null || host.parentElement === null ? null : host.parentElement.tagName,
       }
     },
     ghostNow() {

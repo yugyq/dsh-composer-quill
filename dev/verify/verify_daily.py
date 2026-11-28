@@ -806,13 +806,17 @@ def main() -> int:
         )
         h("setComposeTiming({first: 0, step: 220})")
 
-        # ---- S26 长灰字必须留在可见的滚动框内
-        # 官方结构是 card > scroll(overflow:auto, 固定视口) > grow > editor：编辑器会长高，
-        # 真正裁切的是 scroll。这里按同样的结构量，断言灰字不越过 scroll 的底边。
+        # ---- S26 长灰字不跑出视口
+        # 0.33.7 起灰字挂在 <body> 上做 fixed，预算按视口算，所以它允许越过输入框的
+        # 滚动框（那是以前被裁成两行的原因）。这条改为钉住另一件事：再长也不能画到视口外。
         reset("")
         h("setComposeMode('long')")
         h("typeLive('帮我把这段构建日志从头到尾看一遍并逐行给出结论，标出最先失败的那一步以及重试次数', {delay: 35})")
         page.wait_for_timeout(2200)
+        # 把视口压到 220 高，预算才会真的夹住这 176px 的灰字：
+        # 有上限时它停在 124px 左右，没上限时会一路画到视口外。
+        page.set_viewport_size({"width": 980, "height": 220})
+        page.wait_for_timeout(400)
         geometry = page.evaluate(
             """() => {
                 const editor = document.querySelector('[data-composer-input]');
@@ -823,6 +827,7 @@ def main() -> int:
                 const g = ghost.getBoundingClientRect();
                 const s = scroll.getBoundingClientRect();
                 return {
+                    viewport: window.innerHeight,
                     scrollTop: Math.round(s.top), scrollBottom: Math.round(s.bottom),
                     editorBottom: Math.round(e.bottom),
                     ghostTop: Math.round(g.top), ghostBottom: Math.round(g.bottom),
@@ -833,13 +838,15 @@ def main() -> int:
             }"""
         )
         record(
-            "S26 长灰字不越过滚动框",
+            "S26 长灰字不跑出视口",
             bool(geometry)
             and geometry["ghostText"] >= 8
-            and geometry["ghostBottom"] <= geometry["scrollBottom"] + 6,
+            and geometry["ghostBottom"] <= geometry["viewport"] - 6,
             f"渲染 {geometry['ghostText']} 字，结尾 {geometry['ghostTail']!r}，几何 {geometry}",
         )
         h("setComposeMode('ok')")
+        page.set_viewport_size({"width": 980, "height": 480})
+        page.wait_for_timeout(300)
 
         # ---- S27 打开对话框后灰字必须消失
         # 灰字层是 fixed + 极高 z-index：打开设置这类对话框时它会画在对话框上面。
@@ -1603,7 +1610,7 @@ def main() -> int:
             f"换前={s63_before} 换后={s63_after} 图层={s63_layers}",
         )
 
-        # ---- S64 长建议按两行裁好，不卡死
+        # ---- S64 长建议整段画出来，不拿省略号截断
         page.reload()
         page.wait_for_selector("[data-composer-input]")
         page.wait_for_timeout(1200)
@@ -1611,15 +1618,19 @@ def main() -> int:
         h("typeLive('把这段构建日志')")
         page.wait_for_timeout(2500)
         s64 = h("ghostFit()")
-        # 借高度停在这里，是升级后的取舍：宁可两行加省略号，也不能让排版在真机上死循环。
-        # 所以断言钉两件事——省略号出现（说明裁切走的是设计好的那条路），
-        # 以及页面仍然能动（排版没有把自己递归进去）。
+        # 灰字这一层挂在 <body> 上做 position:fixed，量的是视口预算而不是输入框那两行；
+        # 断言钉三件事——整段都画了（没有省略号）、真的占了多行、宿主不再裁切。
         alive = page.evaluate("1 + 1") == 2
         h("setComposeMode('ok')")
         record(
-            "S64 长建议按两行裁好，页面不卡死",
-            s64.get("truncated") is True and (s64.get("chars") or 0) > 20 and alive,
-            f"字数={s64.get('chars')} 截断={s64.get('truncated')} 卡片高={s64.get('cardHeight')} 应答={alive}",
+            "S64 长建议整段画出来，不拿省略号截断",
+            s64.get("truncated") is False
+            and (s64.get("chars") or 0) > 300
+            and (s64.get("textHeight") or 0) > 120
+            and s64.get("hostParent") == "BODY"
+            and alive,
+            f"字数={s64.get('chars')} 截断={s64.get('truncated')} 灰字高={s64.get('textHeight')} "
+            f"宿主={s64.get('hostParent')} 卡片高={s64.get('cardHeight')} 应答={alive}",
         )
 
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")

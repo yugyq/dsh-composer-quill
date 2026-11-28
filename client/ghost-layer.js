@@ -23,9 +23,7 @@
       // Floats on the first line only: wrapped lines then start at the content edge.
       let spacerEl = null
       // 编辑框自己的 min-height，提案撑高之前先存下来。
-      let savedMinHeight = null
       // Parent we made positioned, so its own style can be put back.
-      let positionedParent = null
       let target = null
       let placeholderEl = null
       let placeholderDisplay = ''
@@ -93,18 +91,6 @@
         if (textEl === null || !(limit > 0)) return
         const full = textNode === null ? '' : textNode.nodeValue ?? ''
         if (full === '' || textEl.scrollHeight <= limit + 1) return
-        // 灰字是浮层，不会撑高输入框：先借最多两行的高度，让它像正文一样换行。
-        // 每次重新判断：借过一次后更长的尾巴仍需要更多高度，否则只能被省略号截断。
-        if (target !== null) {
-          const line = Number.parseFloat(getComputedStyle(textEl).lineHeight) || 24
-          const want = Math.min(textEl.scrollHeight, limit + line * 2)
-          const current = Number.parseFloat(getComputedStyle(target).minHeight) || 0
-          if (want > current + 2) {
-            if (savedMinHeight === null) savedMinHeight = target.style.minHeight
-            target.style.minHeight = `${Math.round(want)}px`
-            return
-          }
-        }
         const chars = Array.from(full)
         let low = 0
         let high = chars.length
@@ -131,15 +117,16 @@
         const left = Math.max(rect.left + px(style.borderLeftWidth) + px(style.paddingLeft), clip.left)
         const top = Math.max(rect.top + px(style.borderTopWidth) + px(style.paddingTop), clip.top)
         const origin = hostOrigin()
+        const limit = viewportAllowance(top)
         place(
           left - origin.left,
           top - origin.top,
           Math.max(0, Math.min(rect.width - px(style.paddingLeft) - px(style.paddingRight), clip.right - left)),
           null,
           style.textAlign,
-          clip.bottom - top,
+          limit,
         )
-        fitToHeight(clip.bottom - top)
+        fitToHeight(limit)
         copyFont(style)
       }
 
@@ -172,17 +159,28 @@
         return { left: targetRect.left, right: targetRect.right, top: targetRect.top, bottom: targetRect.bottom }
       }
 
+      /**
+       * 灰字是宿主之外的一层浮层：真正限制它的不该是输入框的可见高度，而是屏幕。
+       * 给「从这一行往下到视口底部」的余量，但不超过半屏——否则一条长建议会把
+       * 后面的内容整块盖住。装不下时仍然用省略号收尾。
+       */
+      const viewportAllowance = (topPx) => {
+        const viewport = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 800
+        const room = Math.max(24, viewport - 12 - topPx)
+        return Math.max(24, Math.min(room, Math.round(viewport * 0.6)))
+      }
+
       const layoutCaret = () => {
         if (target === null || target === undefined) return false
         const style = getComputedStyle(target)
         const px = (value) => Number.parseFloat(value) || 0
         const box = target.getBoundingClientRect()
         const clip = clipBox()
-        // A fixed layer is not clipped by the editor, so every limit comes from the
-        // visible composer box instead of the editor's own (taller) box.
+        // A fixed layer is not clipped by the editor. The composer's visible box still
+        // decides the wrapping width, but the height budget comes from the viewport.
         const contentLeft = Math.max(box.left + px(style.borderLeftWidth) + px(style.paddingLeft), clip.left)
         const contentRight = Math.min(box.right - px(style.borderRightWidth) - px(style.paddingRight), clip.right)
-        const contentBottom = Math.min(box.bottom - px(style.borderBottomWidth) - px(style.paddingBottom), clip.bottom)
+
         let rect = caretRect()
         // A collapsed-range rect at the line start is a measurement failure, not a caret
         // at the start: fall back to the last character's right edge — unless the caret
@@ -204,8 +202,8 @@
         // A full-width block starting at the content edge, with the caret offset carried
         // by a one-line float: wrapped lines fall back to the left edge instead of keeping
         // the caret's indent.
-        // 可用高度必须在同一个坐标空间里算：lineTop 相对 host，contentBottom 是视口。
-        const limit = contentBottom - (rect.top - leading)
+        // 可用高度只跟视口有关：灰字这一层本来就不在输入框里。
+        const limit = viewportAllowance(rect.top - leading)
         place(contentLeft - origin.left, lineTop, blockWidth, null, 'left', limit)
         if (spacerEl !== null) {
           const line = Number.parseFloat(style.lineHeight) || rect.height || 24
@@ -230,14 +228,6 @@
 
       const clear = () => {
         if (liveLayer === token) liveLayer = null
-        if (positionedParent !== null) {
-          positionedParent.style.position = ''
-          positionedParent = null
-        }
-        if (target !== null && savedMinHeight !== null) {
-          target.style.minHeight = savedMinHeight
-          savedMinHeight = null
-        }
         if (host !== null) {
           host.remove()
           host = null
@@ -261,9 +251,10 @@
         host.setAttribute('data-composer-quill', 'layer')
         host.setAttribute('data-session', ownSession)
         host.setAttribute('aria-hidden', 'true')
-        // Inside the composer, not on <body>: the composer clips it, dialogs cover it,
-        // and the tail wraps inside the same box the text does.
-        host.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;z-index:0;pointer-events:none;'
+        // On <body>, fixed: the composer's own overflow clipped the tail after two lines
+        // no matter how much height the text wanted. A viewport-anchored layer cannot be
+        // clipped by an ancestor, and `place()` already works in viewport coordinates.
+        host.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;overflow:visible;z-index:2147483000;pointer-events:none;'
         textEl = document.createElement('div')
         textEl.setAttribute('data-composer-quill', 'text')
         spacerEl = document.createElement('i')
@@ -285,13 +276,7 @@
           'display:none',
         ].join(';')
         host.appendChild(textEl)
-        const parent = editor.parentElement
-        const parentStyle = parent === null ? null : getComputedStyle(parent)
-        if (parent !== null && parentStyle !== null && parentStyle.position === 'static') {
-          parent.style.position = 'relative'
-          positionedParent = parent
-        }
-        ;(parent ?? document.body).appendChild(host)
+        document.body.appendChild(host)
         return true
       }
 
