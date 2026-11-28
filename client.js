@@ -27,7 +27,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.33.3'
+    const BUILD = '0.33.4'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -307,6 +307,24 @@ const COVERED_DEBOUNCE_MS = 1200
       if (live.storeSessionId !== live.sessionId) return false
       if (live.alreadyInEditor === true) return false
       return typeof live.current === 'string' && live.current !== ''
+    }
+
+    /**
+     * A compose suggestion is about text that is already there: a tail continues it,
+     * a rewrite replaces it. With an empty composer there is nothing to continue, and
+     * `followRemainder(full, '')` is the whole suggestion — which is how a leftover
+     * from the previous draft ended up painted as if it were the user's opening line.
+     */
+    function composeVisible(input) {
+      const live = input ?? {}
+      if (live.composeEnabled === false || live.running === true) return false
+      if (live.kind !== 'compose') return false
+      if (live.sessionId === null || live.sessionId === undefined) return false
+      if (live.storeSessionId !== live.sessionId) return false
+      if (typeof live.composed !== 'string' || live.composed === '') return false
+      if (typeof live.editorText !== 'string' || live.editorText.trim() === '') return false
+      if (live.tail !== '') return true
+      return live.fresh === true && live.composed.trim() !== live.draftBase.trim()
     }
 
     /** Read an SSE compose response, falling back to a whole JSON body. */
@@ -3253,11 +3271,18 @@ const COVERED_DEBOUNCE_MS = 1200
         nextEnabled, running, draftEmpty, kind: state.kind, sessionId,
         storeSessionId: state.sessionId, current, alreadyInEditor,
       })
-      const composeActive = composeEnabled && !running
-        && state.kind === 'compose'
-        && state.sessionId === sessionId
-        && composed !== ''
-        && (remainder !== '' || (fresh && composed.trim() !== draftBase.trim()))
+      const composeActive = composeVisible({
+        composeEnabled,
+        running,
+        kind: state.kind,
+        sessionId,
+        storeSessionId: state.sessionId,
+        composed,
+        editorText: liveText,
+        tail: remainder,
+        fresh,
+        draftBase,
+      })
       // Model proposal first; while it is missing, the user's own history fills
       // the gap instantly (no request, no debounce).
       const historyMatch = enabled && !running && !nextActive && !composeActive
@@ -3946,6 +3971,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, token, closeOnEscape, layerStats, pickEditor, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, composeVisible, token, closeOnEscape, layerStats, pickEditor, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

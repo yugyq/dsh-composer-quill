@@ -4,7 +4,7 @@
 
 `client.js` 里目前有五个地方会调 `request()`，各自的守卫散落在 effect 里，靠注释和实测记忆维持一致。本文件列的是**现状 + 已定的三条决定**，改结构时以它为准，行为改变也要先改它。
 
-> 适用版本：0.33.3
+> 适用版本：0.33.4
 > 相关常量：`COMPOSE_DEBOUNCE_MS = 120`、`COVERED_DEBOUNCE_MS = 1200`、`RETRIGGER_INTERVAL_MS = 3000`、`CLIENT_TIMEOUT_MS = 20000`、`MIN_DRAFT_CHARS = 1`
 
 ## 五个发起方
