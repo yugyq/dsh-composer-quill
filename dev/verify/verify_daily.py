@@ -1603,6 +1603,22 @@ def main() -> int:
             f"换前={s63_before} 换后={s63_after} 图层={s63_layers}",
         )
 
+        # ---- S64 长建议不许被省略号截断
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_timeout(1200)
+        h("setComposeMode('huge')")
+        h("typeLive('把这段构建日志')")
+        page.wait_for_timeout(2500)
+        s64 = h("ghostFit()")
+        h("setComposeMode('ok')")
+        record(
+            "S64 长建议整段画出来，不拿省略号截断",
+            s64.get("chars", 0) > 300 and s64.get("truncated") is False
+            and (s64.get("cardHeight") or 0) > 100,
+            f"字数={s64.get('chars')} 截断={s64.get('truncated')} 卡片高={s64.get('cardHeight')} 上限={s64.get('cardMaxHeight')}",
+        )
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
 
@@ -1617,7 +1633,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 75
+EXPECTED_SCENARIOS = 76
 
 
 if __name__ == "__main__":

@@ -71,11 +71,15 @@ window.fetch = async (url, init) => {
     // for this draft from the answer for the previous one — which is exactly what
     // a prefill would blur together.
     const echoTail = `，接着查「${Array.from(draft).slice(-4).join('')}」那几条 409。`
+    // 'huge' is the shape the two-line cap used to cut with an ellipsis: a tail
+    // that needs far more height than the composer shows by default.
+    const hugeTail = Array.from({ length: 6 }, (_, i) => `第${i + 1}步：把这一段时间窗里的每一个请求按耗时从高到低排开，标出它属于哪个服务、有没有重试、重试了几次，并把失败的那几次的原始响应贴出来。`).join('')
     const reply = typo
       ? 'REWRITE:\n帮我把这段日志整理一下，找出报错的那几行。'
       : unchanged ? ''
         : composeMode === 'echo' ? echoTail
           : composeMode === 'long' ? longTail
+            : composeMode === 'huge' ? hugeTail
             : '，找出报错的那几行。'
     const encoder = new TextEncoder()
     const frame = (event, data) => encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
@@ -683,6 +687,21 @@ async function main() {
       }
       await next
       return { atTask, frames }
+    },
+    /** What the ghost painted and whether the composer had to grow for it. */
+    ghostFit() {
+      const text = document.querySelector('[data-composer-quill="text"]')
+      const card = document.querySelector('.scroll')
+      const chip = document.querySelector('[data-composer-quill="dock-suggestion"]')
+      const painted = text === null ? '' : text.textContent ?? ''
+      return {
+        painted,
+        chars: Array.from(painted).length,
+        truncated: painted.endsWith('…'),
+        cardHeight: card === null ? null : Math.round(card.getBoundingClientRect().height),
+        cardMaxHeight: card === null ? null : getComputedStyle(card).maxHeight,
+        chip: chip === null ? null : (chip.textContent ?? ''),
+      }
     },
     ghostNow() {
       const text = document.querySelector('[data-composer-quill="text"]')

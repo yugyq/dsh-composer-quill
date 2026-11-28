@@ -24,6 +24,10 @@
       let spacerEl = null
       // 编辑框自己的 min-height，提案撑高之前先存下来。
       let savedMinHeight = null
+      // The composer's own scroller is what actually clips a long tail. Growing the
+      // field alone does nothing when an ancestor caps its height.
+      let clipTarget = null
+      let savedMaxHeight = null
       // Parent we made positioned, so its own style can be put back.
       let positionedParent = null
       let target = null
@@ -89,20 +93,43 @@
        * composer shows one line and the tail needs two, cut the text and append an
        * ellipsis. Tab still inserts the whole proposal — only the preview shortens.
        */
-      const fitToHeight = (limit) => {
-        if (textEl === null || !(limit > 0)) return
+      const fitToHeight = (limit, mayBorrow = true) => {
+        if (textEl === null || !(limit > 0)) return false
         const full = textNode === null ? '' : textNode.nodeValue ?? ''
-        if (full === '' || textEl.scrollHeight <= limit + 1) return
-        // 灰字是浮层，不会撑高输入框：先借最多两行的高度，让它像正文一样换行。
-        // 每次重新判断：借过一次后更长的尾巴仍需要更多高度，否则只能被省略号截断。
-        if (target !== null) {
+        if (full === '' || textEl.scrollHeight <= limit + 1) return false
+        // 灰字是浮层，不会自己撑高输入框：先借高度，让它像正文一样换行。
+        // 借多少由屏幕决定，不是由行数决定——两行以外的建议同样要能读完整，
+        // 只有连半屏都装不下时才退化成省略号。
+        if (target !== null && mayBorrow) {
           const line = Number.parseFloat(getComputedStyle(textEl).lineHeight) || 24
-          const want = Math.min(textEl.scrollHeight, limit + line * 2)
+          const viewport = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 800
+          const room = Math.max(line * 4, Math.round(viewport * 0.55))
+          const want = Math.min(textEl.scrollHeight, limit + room)
           const current = Number.parseFloat(getComputedStyle(target).minHeight) || 0
           if (want > current + 2) {
             if (savedMinHeight === null) savedMinHeight = target.style.minHeight
+            const before = target.getBoundingClientRect().height
             target.style.minHeight = `${Math.round(want)}px`
-            return
+            // 只有真的长高了才算借到：宿主如果把高度钉死，再借一次也不会变，
+            // 那就直接落到下面的省略号分支，而不是无限重排。
+            if (target.getBoundingClientRect().height > before + 1) return true
+          }
+          // The field grew (or the host pinned it). If the ghost still does not fit,
+          // the composer's scroller is the limit — let it grow for as long as this
+          // suggestion is showing, exactly as it would while the user types that much.
+          const short = textEl.scrollHeight - (limit + 1)
+          const scroller = clipAncestor()
+          if (short > 0 && scroller !== null && scroller !== target) {
+            const cap = Number.parseFloat(getComputedStyle(scroller).maxHeight) || 0
+            if (cap > 0) {
+              const before = scroller.getBoundingClientRect().height
+              if (savedMaxHeight === null) {
+                clipTarget = scroller
+                savedMaxHeight = scroller.style.maxHeight
+              }
+              scroller.style.maxHeight = `${Math.round(cap + short + 4)}px`
+              if (scroller.getBoundingClientRect().height > before + 1) return true
+            }
           }
         }
         const chars = Array.from(full)
@@ -115,6 +142,7 @@
           else high = mid - 1
         }
         if (textNode !== null) textNode.nodeValue = `${chars.slice(0, Math.max(1, low)).join('')}…`
+        return false
       }
 
       /** The host's own origin: caret coordinates are viewport-relative. */
@@ -122,7 +150,7 @@
         const rect = host === null ? null : host.getBoundingClientRect()
         return rect === null ? { left: 0, top: 0 } : { left: rect.left, top: rect.top }
       }
-      const layoutBox = () => {
+      const layoutBox = (afterBorrow = false) => {
         if (target === null || target === undefined) return false
         const style = getComputedStyle(target)
         const rect = target.getBoundingClientRect()
@@ -139,7 +167,7 @@
           style.textAlign,
           clip.bottom - top,
         )
-        fitToHeight(clip.bottom - top)
+        if (fitToHeight(clip.bottom - top, !afterBorrow)) return layoutBox(true)
         copyFont(style)
       }
 
@@ -148,6 +176,20 @@
        * (overflow) or draws the composer card. The editor itself is not a limit —
        * it grows taller than the visible card and scrolls.
        */
+      /** The ancestor that really clips the ghost, or null when nothing does. */
+      const clipAncestor = () => {
+        if (target === null || target === undefined) return null
+        let node = target.parentElement
+        for (let depth = 0; node !== null && depth < 8; depth += 1) {
+          const style = getComputedStyle(node)
+          const clips = style.overflowX !== 'visible' || style.overflowY !== 'visible'
+          const radius = Number.parseFloat(style.borderRadius) || 0
+          if (clips || radius >= 8) return node
+          node = node.parentElement
+        }
+        return null
+      }
+
       const clipBox = () => {
         // 测试桩里可能还没有编辑器：没有目标就没有裁切框。
         if (target === null || target === undefined) return { left: 0, right: 0, top: 0, bottom: 0 }
@@ -172,7 +214,7 @@
         return { left: targetRect.left, right: targetRect.right, top: targetRect.top, bottom: targetRect.bottom }
       }
 
-      const layoutCaret = () => {
+      const layoutCaret = (afterBorrow = false) => {
         if (target === null || target === undefined) return false
         const style = getComputedStyle(target)
         const px = (value) => Number.parseFloat(value) || 0
@@ -212,7 +254,7 @@
           spacerEl.style.width = `${Math.round(indentWidth)}px`
           spacerEl.style.height = `${Math.round(line)}px`
         }
-        fitToHeight(limit)
+        if (fitToHeight(limit, !afterBorrow)) return layoutCaret(true)
         copyFont(style)
         return true
       }
@@ -237,6 +279,11 @@
         if (target !== null && savedMinHeight !== null) {
           target.style.minHeight = savedMinHeight
           savedMinHeight = null
+        }
+        if (clipTarget !== null && savedMaxHeight !== null) {
+          clipTarget.style.maxHeight = savedMaxHeight
+          clipTarget = null
+          savedMaxHeight = null
         }
         if (host !== null) {
           host.remove()
