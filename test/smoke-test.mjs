@@ -1718,12 +1718,11 @@ check('a run of ignored suggestions withholds rewrites, not tails', () => {
     return ghost.getSnapshot()
   }
 
-  // One ignore is not a streak yet: the rewrite still lands.
-  ghost.noteIgnored()
+  // Nothing ignored yet: the rewrite lands.
   const first = push('full', '帮我把这段日志整理一下。')
   assert.deepEqual(first.items, ['帮我把这段日志整理一下。'])
 
-  // The second ignore buys silence: nothing is painted, and the store says why.
+  // One ignore is already a decision: rewrites stop, and the store says why.
   ghost.noteIgnored()
   const third = push('full', '整段改写：把日志整理成三条要点。')
   assert.deepEqual(third.items, [])
