@@ -222,9 +222,18 @@
     // Painting belongs to one Session: a switch must not leave the previous ghost on
     // screen while the new composer is being filled in.
     const paintedSession = React.useRef(sessionId)
+    // A dock that has just mounted is the one on screen: it takes the layer from any
+    // dock the host left alive behind it, so a stale Session cannot paint here.
+    React.useEffect(() => {
+      if (typeof ghostLayer.claim === 'function') ghostLayer.claim()
+      return () => { if (typeof ghostLayer.release === 'function') ghostLayer.release() }
+    }, [ghostLayer])
     React.useEffect(() => {
       if (paintedSession.current !== sessionId) {
         paintedSession.current = sessionId
+        // The pane showing this Session is now the one on screen: take the layer
+        // ownership away from whichever dock was drawing before it (issue #10).
+        if (typeof ghostLayer.claim === 'function') ghostLayer.claim()
         ghostLayer.clear()
         return undefined
       }
@@ -346,6 +355,10 @@
         document.removeEventListener('focusout', onFocusChange, true)
         if (frame !== null) window.cancelAnimationFrame(frame)
         if (paintData.paintNow === paint) paintData.paintNow = null
+        // The layer lives exactly as long as this effect: when the Session pane goes
+        // away the dock is unmounted, and a layer left behind keeps painting the old
+        // suggestion into whatever composer takes its place (issue #10, third report).
+        ghostLayer.clear()
       }
     }, [visible, ghost, ghostLayer, sessionId])
     }

@@ -1793,12 +1793,19 @@ const COVERED_DEBOUNCE_MS = 1200
      * View-only inline ghost layer. It lives on <body> as a fixed layer, so the
      * composer's own overflow and stacking cannot clip it.
      */
+    // The dock that owns the screen. A Session switch may leave the previous dock
+    // mounted (the host keeps both panes alive), and two docks each with their own
+    // layer will both paint into the one composer the user is typing in. Whoever
+    // claimed last is the one on screen; everyone else goes quiet.
+    let liveLayer = null
+
     function createGhostLayer(owner = '') {
       // The Session this layer belongs to. A dock that has been unmounted keeps a
       // reference to its layer for one more effect run, and mount() used to adopt
       // whatever composer was on screen at that moment: the old session's tail then
       // appeared in the new one (issue #10). Ownership is the fix, not timing.
       const ownSession = typeof owner === 'string' ? owner : ''
+      const token = { session: ownSession }
       let host = null
       let textEl = null
       let textNode = null
@@ -2011,6 +2018,7 @@ const COVERED_DEBOUNCE_MS = 1200
       }
 
       const clear = () => {
+        if (liveLayer === token) liveLayer = null
         if (positionedParent !== null) {
           positionedParent.style.position = ''
           positionedParent = null
@@ -2130,6 +2138,12 @@ const COVERED_DEBOUNCE_MS = 1200
           clear()
           return
         }
+        // Another dock claimed the screen after this one mounted: this layer belongs
+        // to a Session that is no longer on display, so it has nothing to say here.
+        if (liveLayer !== null && liveLayer !== token) {
+          clear()
+          return
+        }
         if (host === null) {
           if (!mount()) return
         }
@@ -2153,7 +2167,20 @@ const COVERED_DEBOUNCE_MS = 1200
         target = null
       }
 
-      return { render, clear, sweep, isMounted: () => host !== null && host.isConnected, debug }
+      /** Take the screen: drop every layer in the document, including our own. */
+      const claim = () => {
+        liveLayer = token
+        sweep()
+        return true
+      }
+
+      /** Give the screen back when this dock goes away. */
+      const release = () => {
+        if (liveLayer === token) liveLayer = null
+        return true
+      }
+
+      return { render, clear, sweep, claim, release, isMounted: () => host !== null && host.isConnected, debug }
     }
 
 // --- hooks.js — concatenated into client.js by dev/tools/build-client.mjs ---
@@ -2380,9 +2407,18 @@ const COVERED_DEBOUNCE_MS = 1200
     // Painting belongs to one Session: a switch must not leave the previous ghost on
     // screen while the new composer is being filled in.
     const paintedSession = React.useRef(sessionId)
+    // A dock that has just mounted is the one on screen: it takes the layer from any
+    // dock the host left alive behind it, so a stale Session cannot paint here.
+    React.useEffect(() => {
+      if (typeof ghostLayer.claim === 'function') ghostLayer.claim()
+      return () => { if (typeof ghostLayer.release === 'function') ghostLayer.release() }
+    }, [ghostLayer])
     React.useEffect(() => {
       if (paintedSession.current !== sessionId) {
         paintedSession.current = sessionId
+        // The pane showing this Session is now the one on screen: take the layer
+        // ownership away from whichever dock was drawing before it (issue #10).
+        if (typeof ghostLayer.claim === 'function') ghostLayer.claim()
         ghostLayer.clear()
         return undefined
       }
@@ -2504,6 +2540,10 @@ const COVERED_DEBOUNCE_MS = 1200
         document.removeEventListener('focusout', onFocusChange, true)
         if (frame !== null) window.cancelAnimationFrame(frame)
         if (paintData.paintNow === paint) paintData.paintNow = null
+        // The layer lives exactly as long as this effect: when the Session pane goes
+        // away the dock is unmounted, and a layer left behind keeps painting the old
+        // suggestion into whatever composer takes its place (issue #10, third report).
+        ghostLayer.clear()
       }
     }, [visible, ghost, ghostLayer, sessionId])
     }

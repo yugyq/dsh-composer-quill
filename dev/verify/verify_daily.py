@@ -1528,6 +1528,42 @@ def main() -> int:
         )
         reset("")
 
+        # ---- S60 关掉分会话面板（卸载 dock）时，图层必须跟着消失
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_timeout(1200)
+        h("setComposeMode('long')")
+        h("setComposeTiming({'first': 120, 'step': 300})")
+        h("typeLive('把这段访问日志按时间顺序排一下')")
+        page.wait_for_timeout(700)
+        s60_before = h("layerCount()")
+        s60_after = h("unmountDock()")
+        # React runs a passive cleanup a beat after the unmount: poll instead of
+        # trusting the first read (0.33.4's S60 read too early and passed by luck).
+        deadline = time.time() + 1.5
+        while time.time() < deadline:
+            s60_after = h("layerCount()")
+            if s60_after == 0:
+                break
+            page.wait_for_timeout(80)
+        h("setComposeMode('ok')")
+        record(
+            "S60 面板卸载后不许留下任何一块灰字",
+            s60_before >= 1 and s60_after == 0,
+            f"卸载前图层={s60_before} 卸载后={s60_after}",
+        )
+
+        # ---- S61 新面板挂载时就该把旧面板留下的灰字收走
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_timeout(1200)
+        s61 = h("staleLayerSweep()")
+        record(
+            "S61 新面板挂载会收走旧面板留下的灰字",
+            s61.get("made") is True and s61.get("before") == 1 and s61.get("layers") == 0,
+            f"挂载前图层={s61.get('before')} 认领后={s61.get('layers')}",
+        )
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
 
@@ -1542,7 +1578,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 71
+EXPECTED_SCENARIOS = 73
 
 
 if __name__ == "__main__":

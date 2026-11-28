@@ -3,12 +3,19 @@
      * View-only inline ghost layer. It lives on <body> as a fixed layer, so the
      * composer's own overflow and stacking cannot clip it.
      */
+    // The dock that owns the screen. A Session switch may leave the previous dock
+    // mounted (the host keeps both panes alive), and two docks each with their own
+    // layer will both paint into the one composer the user is typing in. Whoever
+    // claimed last is the one on screen; everyone else goes quiet.
+    let liveLayer = null
+
     function createGhostLayer(owner = '') {
       // The Session this layer belongs to. A dock that has been unmounted keeps a
       // reference to its layer for one more effect run, and mount() used to adopt
       // whatever composer was on screen at that moment: the old session's tail then
       // appeared in the new one (issue #10). Ownership is the fix, not timing.
       const ownSession = typeof owner === 'string' ? owner : ''
+      const token = { session: ownSession }
       let host = null
       let textEl = null
       let textNode = null
@@ -221,6 +228,7 @@
       }
 
       const clear = () => {
+        if (liveLayer === token) liveLayer = null
         if (positionedParent !== null) {
           positionedParent.style.position = ''
           positionedParent = null
@@ -340,6 +348,12 @@
           clear()
           return
         }
+        // Another dock claimed the screen after this one mounted: this layer belongs
+        // to a Session that is no longer on display, so it has nothing to say here.
+        if (liveLayer !== null && liveLayer !== token) {
+          clear()
+          return
+        }
         if (host === null) {
           if (!mount()) return
         }
@@ -363,6 +377,19 @@
         target = null
       }
 
-      return { render, clear, sweep, isMounted: () => host !== null && host.isConnected, debug }
+      /** Take the screen: drop every layer in the document, including our own. */
+      const claim = () => {
+        liveLayer = token
+        sweep()
+        return true
+      }
+
+      /** Give the screen back when this dock goes away. */
+      const release = () => {
+        if (liveLayer === token) liveLayer = null
+        return true
+      }
+
+      return { render, clear, sweep, claim, release, isMounted: () => host !== null && host.isConnected, debug }
     }
 

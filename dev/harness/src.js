@@ -204,6 +204,12 @@ async function main() {
     return true
   }
 
+  /** Unmount the dock the way a Session switch would, and report what stayed behind. */
+  function unmountDock() {
+    root.render(null)
+    return document.querySelectorAll('[data-composer-quill="layer"]').length
+  }
+
   function render(draft, sessionId = 's-harness') {
     root.render(React.createElement(dockEntry.component, {
       session: { sessionId, running: false, blank: false },
@@ -386,6 +392,37 @@ async function main() {
       return document.querySelectorAll('[data-composer-quill="layer"]').length
     },
     /**
+     * The stale dock's layer is still on the composer and the new dock has nothing to
+     * say yet: mounting alone must take the old one away.
+     */
+    staleLayerSweep() {
+      const make = mod.__test?.createGhostLayer
+      if (typeof make !== 'function') return { made: false, layers: -1 }
+      const old = make('s-old-dock')
+      old.render({ inlineText: '旧会话的尾巴。', anchor: 'caret' })
+      const before = document.querySelectorAll('[data-composer-quill="layer"]').length
+      const fresh = make('s-new-dock')
+      fresh.claim()
+      return { made: true, before, layers: document.querySelectorAll('[data-composer-quill="layer"]').length }
+    },
+    /**
+     * Two docks alive, the second one claims the screen, then the first paints again:
+     * the stale one must not put its text on the composer.
+     */
+    layerClaimDuel(first = 'A', second = 'B') {
+      const make = mod.__test?.createGhostLayer
+      if (typeof make !== 'function') return { made: false, layers: -1, winner: '' }
+      const before = make('s-old-dock')
+      before.render({ inlineText: first, anchor: 'caret' })
+      const after = make('s-new-dock')
+      after.claim()
+      before.render({ inlineText: first, anchor: 'caret' })
+      after.render({ inlineText: second, anchor: 'caret' })
+      const nodes = [...document.querySelectorAll('[data-composer-quill="layer"]')]
+      const text = nodes.length === 1 ? (nodes[0].textContent ?? '') : ''
+      return { made: true, layers: nodes.length, winner: text.includes(second) ? 'B' : (text.includes(first) ? 'A' : text) }
+    },
+    /**
      * Two docks alive at once — the shape that drew two ghosts. The second one paints
      * last, then the first paints again: whoever paints last must own the screen.
      */
@@ -458,6 +495,7 @@ async function main() {
       return out
     },
     render,
+    unmountDock,
     typeLive,
     key,
     press,
