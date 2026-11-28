@@ -212,23 +212,38 @@ const COVERED_DEBOUNCE_MS = 1200
       }
     }
 
+    /**
+     * A report that cannot be delivered is invisible: the Host writes a line only
+     * when the body arrives. Counting them here lets the next ordinary request
+     * carry the number to the Host, so "no beacons" and "rejected beacons" stop
+     * looking the same.
+     */
+    const beaconStats = { sent: 0, failed: 0 }
+
+    /** How many stage reports left this page, and how many came back an error. */
+    function beaconTally() {
+      return { sent: beaconStats.sent, failed: beaconStats.failed }
+    }
+
     /** Fire-and-forget stage report; needs no page token. */
     function report(event, data) {
-      try {
-        const capability = token()
-        /** @type {Record<string, string>} */
-        const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
-        if (capability !== '') headers[TOKEN_HEADER] = capability
-        fetch(BEACON, {
-          method: 'POST',
-          headers,
-          credentials: 'same-origin',
-          keepalive: true,
-          body: JSON.stringify({ event, hasToken: capability !== '', build: BUILD, ...data }),
-        }).catch(() => {})
-      } catch {
-        // Diagnostics only.
-      }
+      const capability = token()
+      beaconStats.sent += 1
+      /** @type {Record<string, string>} */
+      const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
+      if (capability !== '') headers[TOKEN_HEADER] = capability
+      const payload = JSON.stringify({ event, hasToken: capability !== '', build: BUILD, ...data })
+      // Resolved through a promise so a synchronous throw and a rejection are the
+      // same thing here; real fetch only ever does the latter.
+      const send = (keepalive) => Promise.resolve()
+        .then(() => fetch(BEACON, { method: 'POST', headers, credentials: 'same-origin', keepalive, body: payload }))
+        .then((response) => { if (response.ok !== true) beaconStats.failed += 1 })
+      send(true).catch(() => {
+        beaconStats.failed += 1
+        // A keep-alive request that never completes is dropped when the document is
+        // replaced; the same body as an ordinary request still arrives.
+        send(false).catch(() => {})
+      })
     }
 
     /**
@@ -2787,7 +2802,7 @@ const COVERED_DEBOUNCE_MS = 1200
             }, live.timeoutMs || CLIENT_TIMEOUT_MS)
           }
           bump()
-          streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose', attachments: live.attachments ?? [], attachmentTotal: live.attachmentTotal ?? 0 }, active.signal, {
+          streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose', attachments: live.attachments ?? [], attachmentTotal: live.attachmentTotal ?? 0, beacons: beaconTally() }, active.signal, {
             start: (data) => {
               bump()
               // Keep whatever is on screen: the first delta replaces it.
@@ -2863,7 +2878,7 @@ const COVERED_DEBOUNCE_MS = 1200
         }, live.timeoutMs || CLIENT_TIMEOUT_MS)
         active.signal.addEventListener('abort', () => clearTimeout(deadline), { once: true })
         Promise.resolve()
-          .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode, attachments: live.attachments ?? [], attachmentTotal: live.attachmentTotal ?? 0 }, active.signal))
+          .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode, attachments: live.attachments ?? [], attachmentTotal: live.attachmentTotal ?? 0, beacons: beaconTally() }, active.signal))
           .then((body) => {
             if (active.signal.aborted) return
             markLive()
@@ -4172,6 +4187,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, ownsCompose, composeVisible, composerForDock, token, closeOnEscape, layerStats, pickEditor, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { attachmentPort, requestSignature, signatureAttachmentKey, nextAskForAttachments, nextVisible, ownsCompose, composeVisible, composerForDock, token, report, beaconTally, closeOnEscape, layerStats, pickEditor, formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, createGhostLayer, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, markNoSuggestion, saidNothing, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

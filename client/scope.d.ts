@@ -33,8 +33,10 @@ declare function fetchModels(signal?: AbortSignal): Promise<any>
 declare function fetchHistory(sessionId: string, signal?: AbortSignal): Promise<any>
 declare function resetUsageTotals(): Promise<any>
 declare function nextVisible(input: any): boolean
+declare function ownsCompose(state: any, sessionId: string | null): boolean
 declare function composeVisible(input: any): boolean
 declare function nextAskForAttachments(input: any): boolean
 declare function closeOnEscape(input: any): boolean
 declare function composerForDock(sessionId: string | null): Element | null
-declare function ownsCompose(state: any, sessionId: string | null): boolean
+
+declare function beaconTally(): { sent: number; failed: number }

@@ -2888,6 +2888,9 @@ async function handlePredict(ctx, token, req, res) {
       attachments: attachments.length,
       attachmentTotal,
       attachmentKinds: attachments.map((item) => item.kind).join('+') || null,
+      // The page counts its own stage reports; without this a report that never
+      // arrived and a report the Host never wrote look exactly the same.
+      beacons: body?.beacons ?? null,
     })
     const wantsStream = mode === 'compose'
       && typeof req.headers.accept === 'string'

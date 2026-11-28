@@ -1340,6 +1340,34 @@ check('only this Session\'s own compose answer may be cleared on a switch', () =
   assert.equal(ownsCompose(compose({}), null), false, 'no Session, nothing to own')
 })
 
+checkAsync('a report that a reload drops is sent again, once, without keep-alive', async () => {
+  const { report, beaconTally } = moduleExports.__test
+  const previousFetch = globalThis.fetch
+  const mine = []
+  globalThis.fetch = async (url, init) => {
+    if (typeof url === 'string' && url.includes('/beacon')) {
+      if (typeof init?.body === 'string' && init.body.includes('"detail":"one"')) mine.push(init)
+      if (init?.keepalive === true) throw new TypeError('keep-alive request dropped')
+      return { ok: true, status: 200, json: async () => ({}) }
+    }
+    return { ok: true, status: 200, json: async () => ({}) }
+  }
+  try {
+    const before = beaconTally()
+    report('probe', { detail: 'one' })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const after = beaconTally()
+    assert.ok(after.sent > before.sent, 'the page counts the attempt')
+    assert.ok(after.failed > before.failed, 'the dropped one is counted as failed')
+    assert.equal(mine.length, 2, 'the body is sent a second time')
+    assert.equal(mine[0].keepalive, true, 'the first attempt is the keep-alive one')
+    assert.notEqual(mine[1].keepalive, true, 'the second attempt is an ordinary request')
+    assert.equal(mine[1].body, mine[0].body, 'the same body goes out again')
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
+
 check('the previous Session next-message candidates are not shown in this one', () => {
   const { nextVisible } = moduleExports.__test
   const live = (over) => ({
