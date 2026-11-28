@@ -39,9 +39,13 @@ const MAX_CANDIDATES = 3
 // rollback switch for the whole change.
 const TIGHT_CONTEXT = String(process.env.DSH_QUILL_CONTEXT ?? 'tight').toLowerCase() !== 'full'
 const CONTEXT_BUDGET = Object.freeze({
-  short: { rows: TIGHT_CONTEXT ? 6 : 8, chars: TIGHT_CONTEXT ? 1200 : 2400 },
-  main: { rows: TIGHT_CONTEXT ? 8 : 10, chars: TIGHT_CONTEXT ? 1600 : 3200 },
-  next: { rows: TIGHT_CONTEXT ? 8 : 10, chars: TIGHT_CONTEXT ? 1600 : 3200 },
+  // Rows are a ceiling, not the budget: an 8-row cap on a conversation whose
+  // messages are ~70 characters kept 607 of the 1600 characters it was allowed,
+  // and dropped a fact that sat two turns earlier. `chars` is what bounds the
+  // prompt; `rows` only stops pathological event counts from being walked.
+  short: { rows: TIGHT_CONTEXT ? 24 : 32, chars: TIGHT_CONTEXT ? 1200 : 2400 },
+  main: { rows: TIGHT_CONTEXT ? 32 : 48, chars: TIGHT_CONTEXT ? 1600 : 3200 },
+  next: { rows: TIGHT_CONTEXT ? 32 : 48, chars: TIGHT_CONTEXT ? 1600 : 3200 },
   message: TIGHT_CONTEXT ? 800 : 2200,
   fallback: TIGHT_CONTEXT ? 1800 : 9000,
 })

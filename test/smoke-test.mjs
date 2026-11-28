@@ -853,6 +853,31 @@ check('a topic from an hour ago cannot be pulled back into the window', () => {
   assert.ok(/第29轮|第30轮/.test(newest), 'the newest turns must be present: ' + newest.slice(0, 60))
 })
 
+check('the row ceiling never starves the character budget', () => {
+  const { transcriptOf } = host.__test
+  // A conversation of short messages: 8 rows kept 607 of the 1600 characters it
+  // was allowed, and dropped a fact that sat two turns back. `chars` is the budget;
+  // `rows` may only stop pathological event counts.
+  const events = [
+    { type: 'user/message', data: { content: [{ type: 'text', text: '记一下，这个仓的编号是 KX-7731，别记错。' }] } },
+    { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '好，KX-7731，我记下了。' }] } } },
+  ]
+  for (let turn = 1; turn <= 12; turn += 1) {
+    events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第 ${turn} 段：先构建、再跑单测、然后打标签，最后发 npm，每一步都要留日志。` }] } })
+    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `收到第 ${turn} 段，按你说的顺序来。` }] } } })
+  }
+  const wide = transcriptOf(events, { rows: 32, chars: 1600 })
+  const narrow = transcriptOf(events, { rows: 8, chars: 1600 })
+  assert.ok(wide.includes('KX-7731'), 'a fact two turns back must survive when the characters allow it')
+  assert.ok(!narrow.includes('KX-7731'), 'the old row cap is what dropped it — keep that comparison honest')
+  assert.ok(wide.length > narrow.length * 2, `the budget must be used: ${wide.length} vs ${narrow.length}`)
+  assert.ok(wide.length <= 1700, `and not exceeded: ${wide.length}`)
+
+  // Defaults must behave like the wide arm, since that is what production uses.
+  const byDefault = transcriptOf(events)
+  assert.ok(byDefault.includes('KX-7731'), 'the default ceiling must not starve the budget either')
+})
+
 check('a recent topic the draft mentions is still pulled in', () => {
   const { transcriptOf, sessionDigest } = host.__test
   const events = []
