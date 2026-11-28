@@ -1,6 +1,6 @@
 # 开发与验证
 
-> 适用版本：0.33.9 ｜ 宿主是手写 ESM，没有构建；浏览器端源码在 `client/`，由 `npm run build:client` 拼成 `client.js`
+> 适用版本：0.33.10 ｜ 宿主是手写 ESM，没有构建；浏览器端源码在 `client/`，由 `npm run build:client` 拼成 `client.js`
 
 
 ## 1. 目录结构
