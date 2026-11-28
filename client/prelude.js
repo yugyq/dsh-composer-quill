@@ -3,7 +3,7 @@
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.33.4'
+    const BUILD = '0.33.5'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -297,31 +297,25 @@ const COVERED_DEBOUNCE_MS = 1200
       if (all.length === 0) return null
       const id = typeof sessionId === 'string' ? sessionId : ''
       const chip = id === '' ? null : document.querySelector(`[data-composer-quill="dock"][data-session="${id}"]`)
-      // No chip, no claim: a dock that cannot show where it lives does not paint.
-      // (Guessing "the only composer" is what let a stale dock adopt a new Session.)
+      // No chip means this dock is not rendering: it has no claim on any field.
       if (chip === null || chip === undefined) return null
       if (typeof chip.closest === 'function') {
         const inside = chip.closest('[data-composer-input]')
         if (inside !== null && inside.isConnected !== false) return inside
       }
-      // The slot is not nested inside the composer box: take the nearest one. A chip
-      // that was carried away with its pane has no neighbour within reach, and the
-      // distance check below keeps it from adopting a stranger's field.
-      const rect = typeof chip.getBoundingClientRect === 'function' ? chip.getBoundingClientRect() : null
-      if (rect === null || (rect.width === 0 && rect.height === 0)) return null
-      let best = null
-      let bestGap = Infinity
-      for (const node of all) {
-        const box = node.getBoundingClientRect()
-        const dx = Math.max(box.left - rect.right, rect.left - box.right, 0)
-        const dy = Math.max(box.top - rect.bottom, rect.top - box.bottom, 0)
-        const gap = dx * dx + dy * dy
-        if (gap < bestGap) {
-          bestGap = gap
-          best = node
-        }
+      // The slot is a sibling of the composer, not inside it. Structure decides, not
+      // distance: the innermost ancestor that holds exactly one composer is the pane
+      // this dock belongs to. Floats and layout shifts move pixels; the tree does not.
+      let node = typeof chip.parentElement === 'object' ? chip.parentElement : null
+      for (let depth = 0; node !== null && node !== undefined && depth < 12; depth += 1) {
+        const inside = typeof node.querySelectorAll === 'function'
+          ? node.querySelectorAll('[data-composer-input]')
+          : []
+        const only = inside[0]
+        if (inside.length === 1 && only !== undefined && only.isConnected !== false) return only
+        node = node.parentElement ?? null
       }
-      return best
+      return null
     }
 
     /**

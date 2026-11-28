@@ -390,9 +390,12 @@
 
       /** Take the screen: drop every layer in the document, including our own. */
       const claim = () => {
+        // Idempotent on purpose: StrictMode runs mount effects twice, and a second claim
+        // by the same owner must not look like a takeover to the callers above.
+        const took = liveLayer !== token
         liveLayer = token
         sweep()
-        return true
+        return took
       }
 
       /** Give the screen back when this dock goes away. */

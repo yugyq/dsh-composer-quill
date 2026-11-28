@@ -256,6 +256,11 @@
       }
       return false
     }
+      // Not a hook: this lives in an effect closure, where hooks are illegal.
+      let skippedFor = null
+      // Which composer this dock last bound to. The host rebuilds the pane on a
+      // Session switch, so the node can be replaced under us; the observer below
+      // repaints only when the answer to "where do I paint" really changed.
       const paint = () => {
         if (overlayBlocking()) {
           ghostLayer.clear()
@@ -269,8 +274,15 @@
         const mine = composerForDock(data.sessionId)
         if (typeof ghostLayer.bind === 'function' && !ghostLayer.bind(mine)) {
           ghostLayer.clear()
+          // Say so once per Session instead of going quiet: a dock that cannot find
+          // its composer would otherwise look exactly like "no suggestion right now".
+          if (skippedFor !== data.sessionId) {
+            skippedFor = data.sessionId
+            report('paint-skip', { sessionId: data.sessionId, reason: 'no-composer' })
+          }
           return
         }
+        skippedFor = null
         let anchor = 'none'
         // The host reports the draft from its own state, and the editor keeps the
         // previous Session's text until the swap lands: believing the prop alone paints
@@ -350,6 +362,9 @@
       // this up for every streamed token elsewhere on the page.
       const mutations = new MutationObserver(schedulePaint)
       if (editor !== null) mutations.observe(editor, { childList: true, subtree: true, characterData: true })
+      // No tree observer here on purpose: the slow DOM poll below already notices a
+      // rebuilt field and re-queues the request, so a second mechanism would only
+      // add mutations to react to without a case of its own to prove it.
       window.addEventListener('resize', schedulePaint)
       window.addEventListener('scroll', schedulePaint, true)
       document.addEventListener('selectionchange', schedulePaint)

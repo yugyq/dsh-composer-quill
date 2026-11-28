@@ -1580,6 +1580,29 @@ def main() -> int:
             f"单输入框={s62_one} 双输入框={s62_two}",
         )
 
+        # ---- S63 宿主重建输入框节点之后，建议不能跟着旧节点一起消失
+        page.reload()
+        page.wait_for_selector("[data-composer-input]")
+        page.wait_for_timeout(1200)
+        h("setComposeMode('long')")
+        # Let the stream finish first: a field rebuilt while nothing else is happening is
+        # the only way to tell a repaint on demand from a repaint on the next chunk.
+        h("setComposeTiming({'first': 60, 'step': 20})")
+        h("typeLive('把这段构建日志按时间顺序排一下')")
+        page.wait_for_timeout(1500)
+        s63_before = h("ghostHome()")
+        s63_swap = h("swapComposer()")
+        page.wait_for_timeout(500)
+        s63_after = h("ghostHome()")
+        s63_layers = h("layerCount()")
+        h("setComposeMode('ok')")
+        record(
+            "S63 输入框节点被整体替换后建议还在",
+            bool(s63_before.get("text")) and s63_swap.get("swapped") is True
+            and bool(s63_after.get("text")) and s63_layers == 1,
+            f"换前={s63_before} 换后={s63_after} 图层={s63_layers}",
+        )
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
 
@@ -1594,7 +1617,7 @@ def main() -> int:
 
 # The number the READMEs and the CHANGELOG claim. A drift here means a scenario was
 # added or deleted without updating the docs — say so instead of quietly reporting N/N.
-EXPECTED_SCENARIOS = 74
+EXPECTED_SCENARIOS = 75
 
 
 if __name__ == "__main__":

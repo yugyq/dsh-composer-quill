@@ -205,6 +205,12 @@ async function main() {
   }
 
   /** Unmount the dock the way a Session switch would, and report what stayed behind. */
+  /** Where the visible ghost's own node sits, in screen coordinates. */
+  function layerTop() {
+    const layer = document.querySelector('[data-composer-quill="layer"]')
+    return layer === null ? null : Number(layer.getBoundingClientRect().top.toFixed(1))
+  }
+
   function unmountDock() {
     root.render(null)
     return document.querySelectorAll('[data-composer-quill="layer"]').length
@@ -252,9 +258,12 @@ async function main() {
   }
 
   /** Put the caret at the end of the editor. */
-  function caretToEnd() {
+  function caretToEnd(target) {
+    // Re-read by default: the host replaces the field node on a pane rebuild, and a
+    // caret placed on the captured one leaves the new field without a cursor.
+    const node = target ?? document.querySelector('[data-composer-input]') ?? editor
     const range = document.createRange()
-    range.selectNodeContents(editor)
+    range.selectNodeContents(node)
     range.collapse(false)
     const selection = window.getSelection()
     selection.removeAllRanges()
@@ -459,6 +468,48 @@ async function main() {
       for (const node of document.querySelectorAll('[data-composer-quill="layer"]')) node.remove()
       return { made: true, layers, winner }
     },
+    /**
+     * Replace the composer node the way the host does on a pane rebuild. The replacement
+     * sits lower on the screen, so a paint that still holds the old node shows up as a
+     * ghost left behind at the old height.
+     */
+    swapComposer() {
+      const old = document.querySelector('[data-composer-input]')
+      if (old === null || old.parentElement === null) return { swapped: false }
+      const before = layerTop()
+      const fresh = document.createElement(old.tagName.toLowerCase())
+      for (const attr of Array.from(old.attributes)) fresh.setAttribute(attr.name, attr.value)
+      // Copy the draft only: the ghost lives inside the field too, and copying it would
+      // make the replacement look as if the suggestion were already typed.
+      fresh.textContent = Array.from(old.childNodes)
+        .filter((node) => !(node.nodeType === 1 && node.hasAttribute('data-composer-quill')))
+        .map((node) => node.textContent ?? '')
+        .join('')
+      old.replaceWith(fresh)
+      // The host puts the caret back after it rebuilds the field; without that the ghost
+      // has no caret to follow and would vanish for a reason that has nothing to do
+      // with rebinding.
+      fresh.focus()
+      caretToEnd()
+      // A pane rebuild throws away whatever was drawn into it, the ghost included. Only
+      // a repaint can bring it back, which is the part the observer is there for.
+      for (const layer of document.querySelectorAll('[data-composer-quill="layer"]')) layer.remove()
+      return { swapped: true, before, composerTop: fresh.getBoundingClientRect().top }
+    },
+    /** Where the visible ghost sits, and what it says. */
+    ghostHome() {
+      const layer = document.querySelector('[data-composer-quill="layer"]')
+      const node = document.querySelector('[data-composer-input]')
+      if (layer === null || node === null) return { composer: true, text: null, top: null, composerTop: node.getBoundingClientRect().top }
+      const text = layer.querySelector('[data-composer-quill="text"]') ?? layer
+      return {
+        composer: true,
+        text: text === null ? null : (text.textContent ?? ''),
+        top: Number(layer.getBoundingClientRect().top.toFixed(1)),
+        composerTop: Number(node.getBoundingClientRect().top.toFixed(1)),
+      }
+    },
+    layerTop,
     orphanCount() {
       return document.querySelectorAll('[data-composer-quill="layer"][data-session="s-orphan"]').length
     },
