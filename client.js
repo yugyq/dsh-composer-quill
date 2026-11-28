@@ -1868,6 +1868,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const token = { session: ownSession }
       let host = null
       let textEl = null
+      let panelEl = null
       let textNode = null
       // Floats on the first line only: wrapped lines then start at the content edge.
       let spacerEl = null
@@ -2061,6 +2062,25 @@ const COVERED_DEBOUNCE_MS = 1200
         }
         fitToHeight(limit)
         copyFont(style)
+        // 三行以上就垫一块面板：灰字本来就画在页面之上，长尾直接把正文压住太糙。
+        // 面板从第二行开始，第一行留在输入框里，避免盖住用户已经打出来的字。
+        const line = Number.parseFloat(style.lineHeight) || rect.height || 24
+        const height = textEl === null ? 0 : textEl.scrollHeight
+        if (panelEl !== null) {
+          if (height > line * 1.6) {
+            Object.assign(panelEl.style, {
+              display: '',
+              left: `${Math.round(contentLeft - origin.left - 10)}px`,
+              top: `${Math.round(lineTop + line - 6)}px`,
+              width: `${Math.round(blockWidth + 20)}px`,
+              height: `${Math.round(height - line + 12)}px`,
+            })
+            if (host !== null) host.setAttribute('data-mode', 'panel')
+          } else {
+            panelEl.style.display = 'none'
+            if (host !== null) host.setAttribute('data-mode', 'inline')
+          }
+        }
         return true
       }
 
@@ -2082,6 +2102,7 @@ const COVERED_DEBOUNCE_MS = 1200
           host = null
         }
         textEl = null
+        panelEl = null
         restorePlaceholder()
         target = null
       }
@@ -2104,6 +2125,18 @@ const COVERED_DEBOUNCE_MS = 1200
         // no matter how much height the text wanted. A viewport-anchored layer cannot be
         // clipped by an ancestor, and `place()` already works in viewport coordinates.
         host.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;overflow:visible;z-index:2147483000;pointer-events:none;'
+        panelEl = document.createElement('div')
+        panelEl.setAttribute('data-composer-quill', 'panel')
+        panelEl.style.cssText = [
+          'position:absolute',
+          'box-sizing:border-box',
+          'display:none',
+          'border-radius:10px',
+          'background:rgba(255,255,255,.97)',
+          'border:1px solid rgba(17,24,39,.08)',
+          'box-shadow:0 10px 28px rgba(17,24,39,.10)',
+          'pointer-events:none',
+        ].join(';')
         textEl = document.createElement('div')
         textEl.setAttribute('data-composer-quill', 'text')
         spacerEl = document.createElement('i')
@@ -2124,6 +2157,7 @@ const COVERED_DEBOUNCE_MS = 1200
           'overflow:hidden',
           'display:none',
         ].join(';')
+        host.appendChild(panelEl)
         host.appendChild(textEl)
         document.body.appendChild(host)
         return true

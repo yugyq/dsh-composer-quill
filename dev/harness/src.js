@@ -704,6 +704,13 @@ async function main() {
         chip: chip === null ? null : (chip.textContent ?? ''),
         textHeight: text === null ? null : Math.round(text.getBoundingClientRect().height),
         hostParent: host === null || host.parentElement === null ? null : host.parentElement.tagName,
+        mode: host === null ? null : host.getAttribute('data-mode'),
+        panel: (() => {
+          const panel = document.querySelector('[data-composer-quill="panel"]')
+          if (panel === null) return null
+          const rect = panel.getBoundingClientRect()
+          return { shown: getComputedStyle(panel).display !== 'none', h: Math.round(rect.height), w: Math.round(rect.width) }
+        })(),
       }
     },
     ghostNow() {

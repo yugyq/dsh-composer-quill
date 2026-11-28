@@ -1627,9 +1627,11 @@ def main() -> int:
             and (s64.get("chars") or 0) > 300
             and (s64.get("textHeight") or 0) > 120
             and s64.get("hostParent") == "BODY"
+            and s64.get("mode") == "panel"
+            and (s64.get("panel") or {}).get("shown") is True
             and alive,
             f"字数={s64.get('chars')} 截断={s64.get('truncated')} 灰字高={s64.get('textHeight')} "
-            f"宿主={s64.get('hostParent')} 卡片高={s64.get('cardHeight')} 应答={alive}",
+            f"宿主={s64.get('hostParent')} 模式={s64.get('mode')} 面板={s64.get('panel')} 卡片高={s64.get('cardHeight')} 应答={alive}",
         )
 
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
