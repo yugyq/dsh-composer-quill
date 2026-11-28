@@ -878,6 +878,50 @@ check('the row ceiling never starves the character budget', () => {
   assert.ok(byDefault.includes('KX-7731'), 'the default ceiling must not starve the budget either')
 })
 
+checkAsync('the prompt keeps the first decision and a fact buried mid-message', async () => {
+  const { produceCompose } = host.__test
+  // Two facts that the old numbers dropped in opposite ways: a decision made in
+  // the first turn (the 8-row window never reached it), and a requirement buried
+  // in the middle of a long message (the 800-character cap kept only its head and
+  // its tail). Both must reach the model now.
+  const events = [
+    { type: 'user/message', data: { content: [{ type: 'text', text: '第一个决定：仓编号是 KX-7731。' }] } },
+    { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '记下了。' }] } } },
+  ]
+  for (let turn = 1; turn <= 12; turn += 1) {
+    events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第 ${turn} 轮：字段 ${turn} 对齐。` }] } })
+    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第 ${turn} 轮：收到。` }] } } })
+  }
+  const long = '把导出功能重写一下。' + '旧接口字段名不统一，前端得自己拼。'.repeat(50)
+    + '硬要求：导出文件必须是 UTF-8 编码，而且不能带 BOM。'
+    + '后续还要接一个新的落盘目录，命名规则沿用旧的。'.repeat(40)
+  events.push({ type: 'user/message', data: { content: [{ type: 'text', text: long }] } })
+  events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '明白。' }] } } })
+  events.push({ type: 'user/message', data: { content: [{ type: 'text', text: '那就按这个走。' }] } })
+  events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '好。' }] } } })
+
+  const session = { id: 's-budget', requestHeader: () => ({ config: { provider: 'p', model: 'plain' } }), snapshotEvents: () => events }
+  let prompt = ''
+  const ctx = {
+    get: () => undefined,
+    agents: { get: () => ({ session }) },
+    llm: {
+      async *stream(options) {
+        prompt = options.messages[0].content.map((block) => block.text ?? '').join('')
+        yield { type: 'text-delta', text: '，按 UTF-8 存。' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+  }
+  await produceCompose(ctx, {
+    sessionId: 's-budget', session, events, draft: '导出那块的编码要求是',
+    key: 'budget-e2e', send: () => {}, locale: 'zh-CN', forced: '', signal: new AbortController().signal,
+  })
+  assert.ok(prompt.includes('KX-7731'), 'the first decision must reach the model')
+  assert.ok(prompt.includes('不能带 BOM'), 'a fact buried mid-message must reach the model')
+  assert.ok(prompt.length > 2000, `the budget must actually be used: ${prompt.length}`)
+})
+
 check('a recent topic the draft mentions is still pulled in', () => {
   const { transcriptOf, sessionDigest } = host.__test
   const events = []
